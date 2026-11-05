@@ -7,9 +7,10 @@
 #
 # 端口 33002（web）；WD14 用 33001
 #
-# ⚠️ 关键：WORKBUDDY_API_KEY 从宿主机环境传入。
-#    不要把 key 写进 compose 文件（会进 git / 备份）。
-#    宿主机上先 export，或用同目录的 .env 文件（docker compose 自动读取）。
+# 密钥有两种给法（优先级：环境变量 > 界面设置）：
+#   1. 同目录 .env 里的 WORKBUDDY_API_KEY（docker compose 自动读取）
+#   2. 启动后在界面「设置」页填写，存在 ./data/llm-key.txt（权限 600）
+# 不要把 key 直接写进本文件（会进 git / 备份）。
 services:
   web:
     container_name: prompt-lab-web
@@ -33,17 +34,23 @@ services:
       #   /data/rules.json:rw 给「保存规则」写）
       - ./rules.json:/app/rules.json:ro
       - ./rules.json:/data/rules.json
+      # 运行时设置（界面里改的 API 地址/密钥/模型）。密钥文件权限 600。
+      - ./data:/data-settings
       # 图片目录（反推时可按 NAS 路径读）
       # 本地图片目录（按需改路径；反推时可按容器内路径读图）
       - ./images:/images:ro
     environment:
       - TZ=Asia/Shanghai
-      # ⚠️ 从宿主机环境继承，不落盘（值来自同目录 .env，compose 自动读取）
-      - WORKBUDDY_API_KEY=${WORKBUDDY_API_KEY}
+      # LLM 密钥：可以在这里注入（优先级最高），也可以启动后在界面「设置」里填。
+      # 两者都行；留空则依赖界面设置。
+      - WORKBUDDY_API_KEY=${WORKBUDDY_API_KEY:-}
+      - LLM_BASE_URL=${LLM_BASE_URL:-}
       # OpenViking 的 user 级 key（root key 不能访问数据 API）
       - OPENVIKING_API_KEY=${OPENVIKING_API_KEY}
       # 「保存规则」写这里（可写挂载；不配则规则页只能看不能存）
       - RULES_WRITE_PATH=/data/rules.json
+      # 运行时设置的存放目录（对应上面的 ./data 挂载）
+      - SETTINGS_DIR=/data-settings
       - NODE_ENV=production
     # 与 WD14 在同一宿主机：用 host 网络访问 127.0.0.1:33001 更简单，
     # 但那样会失去端口隔离。这里用默认 bridge，通过 host.docker.internal

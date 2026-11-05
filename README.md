@@ -81,6 +81,61 @@ MOSS-Image 支持用边界框控制画面元素位置。官方规范里模型吃
 
 ---
 
+## 配置模型服务
+
+工作台不绑定任何厂商。**API 地址、密钥、模型都可以在界面里配**，保存即生效，不用重启。
+
+### 界面上配（推荐）
+
+打开右上角 **🔌 设置** 页：
+
+1. 填 **API 地址**（baseURL，通常以 `/v1` 结尾）
+2. 填 **API Key**（保存后只显示掩码，永不回显）
+3. 点 **获取模型列表** —— 会请求 `GET /models` 并列出可用模型
+4. 选一个做 **默认模型**，点 **保存**
+
+服务不支持 `/models` 接口时可以跳过第 3 步，直接手填模型名。
+
+「生成 / 润色 / 迭代」页的模型下拉框会跟着更新。
+
+### 用环境变量配（适合容器编排）
+
+环境变量的优先级**高于**界面设置，适合 CI/编排场景一次注入：
+
+| 变量 | 作用 |
+|---|---|
+| `LLM_BASE_URL` | API 地址 |
+| `WORKBUDDY_API_KEY` | API 密钥（变量名可在 `config.json` 的 `llm.apiKeyEnv` 改） |
+| `SETTINGS_DIR` | 运行时设置的存放目录（默认 `./data`） |
+| `PORT` / `HOST` | 服务监听地址 |
+
+> 若 `apiKey` 来源是环境变量，界面里填的值不会覆盖它——「设置」页会标明来源。
+
+### 配置优先级
+
+```
+环境变量  >  data/settings.json（界面保存的）  >  config.json（出厂默认）
+```
+
+### 密钥怎么存
+
+- 密钥单独存 `data/llm-key.txt`，权限 `600`
+- **不写进** `settings.json`，不写进 `config.json`，不写进任何提交的文件
+- 前端只能拿到 `hasApiKey` 布尔值和掩码，拿不到真值
+- `data/` 已在 `.gitignore` 中
+
+### 支持的接口
+
+任何 OpenAI 兼容的 `/v1/chat/completions`：
+
+- 自建网关（one-api / new-api / LiteLLM 等）
+- Ollama、vLLM、llama.cpp（需兼容 OpenAI 路径）
+- OpenAI、DeepSeek、通义、Moonshot 等云厂商
+
+反推功能额外要求该模型支持 `image_url` 多模态输入。
+
+---
+
 ## 使用方法
 
 ### 典型流程
@@ -148,10 +203,12 @@ curl -s 'http://127.0.0.1:33002/api/tags?q=long%20hair&limit=10'
 │   ├── llm.js           # OpenAI 兼容客户端（含 vision）
 │   ├── vlm.js           # 拒答检测：区分「真拒答」与「软回避」
 │   ├── moss-layout.js   # MOSS-Image Layout 草稿编译器
+│   ├── settings.js      # 运行时设置（URL/key/模型，密钥单独落盘）
 │   ├── services.js      # Danbooru / OpenViking 客户端
 │   ├── character.js     # 角色标签核验与修正
 │   ├── rules.json       # 族规则（多族 + 共享纪律块 + 用词规范）
-│   ├── config.json      # 运行配置（不含任何密钥）
+│   ├── config.json      # 出厂默认配置（不含密钥）
+│   ├── data/            # 运行时设置（自动生成，含密钥，不入库）
 │   ├── public/index.html
 │   └── Dockerfile / docker-compose.yml
 ├── wd14/
@@ -177,6 +234,7 @@ cd web
 node test-engine.mjs    # 规则引擎：JSON 宽容解析、格式清洗、长度统计、系统提示拼装
 node test-layout.mjs    # Layout 编译器：官方换算向量、边界校验
 node test-refusal.mjs   # 拒答检测：强拒答 / 软回避 / 正常输出
+node test-settings.mjs  # 设置：优先级、密钥不回显、原子写入
 node test-services.mjs  # 外部服务客户端（需网络）
 ```
 
@@ -200,16 +258,16 @@ cd prompt-lab
 cp .env.example .env
 ```
 
-编辑 `.env`：
+`.env` 可以留空——**启动后在界面「设置」页配更简单**（见上一节）。
+
+如果偏好环境变量方式，填这两行：
 
 ```bash
 WORKBUDDY_API_KEY=你的key
-LLM_BASE_URL=http://127.0.0.1:7863/v1    # 换成你的网关地址
+LLM_BASE_URL=https://api.example.com/v1
 ```
 
-编辑 `web/config.json` 的 `llm.models`，填上你的服务实际提供的模型 ID。
-
-> `.env` 已被 `.gitignore` 忽略。密钥只走环境变量，不写进任何提交的文件。
+> `.env` 已被 `.gitignore` 忽略。密钥只走环境变量或 `data/llm-key.txt`，不写进任何提交的文件。
 
 ### 2. 准备 WD14 模型
 
@@ -303,7 +361,8 @@ WD14 的价值不在精度，而在**它不会拒答**：它本身就是 Danboor
 2. **OpenViking 检索是可选的**：不配也能用，只是角色库少一层语义召回。
 3. **前端无构建链**：单文件 index.html，功能变多后维护性会下降。
 4. **规则页保存需要可写挂载**：默认只读，要保存需配 `RULES_WRITE_PATH`。
-5. **提示词长度不做限制**：刻意不设上限，但 SDXL 系（NoobAI/通用）有 77 token 的 CLIP 硬分块，超出的部分出图时会被静默丢弃，需自行控制。
+5. **设置页无鉴权**：服务本身不内置登录，暴露到公网前请自行加反代鉴权。
+6. **提示词长度不做限制**：刻意不设上限，但 SDXL 系（NoobAI/通用）有 77 token 的 CLIP 硬分块，超出的部分出图时会被静默丢弃，需自行控制。
 
 ---
 

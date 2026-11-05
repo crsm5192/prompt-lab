@@ -22,6 +22,7 @@ import { fileURLToPath } from 'node:url'
 
 import { createLLM } from './llm.js'
 import { createViking, createBooru } from './services.js'
+import { createSettings } from './settings.js'
 import { searchCharacter, verifyAnchors, applyAnchorFix } from './character.js'
 import { detectRefusal, extractTagsFromVlm } from './vlm.js'
 import { normalizeLayoutOutput } from './moss-layout.js'
@@ -56,7 +57,12 @@ function loadRules() {
 
 const config = loadConfig()
 const { rules, source: rulesPath } = loadRules()
-const llm = createLLM(config.llm)
+
+// 运行时设置：LLM 的 URL / key / 模型可在界面里改，改完立即生效（无需重启）
+const settingsDir = process.env.SETTINGS_DIR || join(HERE, 'data')
+const settings = createSettings({ dir: settingsDir, defaults: config.llm })
+const llm = createLLM(() => settings.resolve())
+
 const viking = createViking(config.viking)
 const booru = createBooru(config.booru)
 const deps = { llm, viking, booru }
@@ -324,7 +330,9 @@ function guessMediaTypeByExt(p) {
 async function reverseByVlm(payload, f) {
   const img = await loadImageForVlm(payload)
   const vcfg = (config.vlm) || {}
-  const model = asString(payload.vlmModel) || asString(vcfg.model) || payload.model
+  // 模型解析顺序：请求指定 > vlm.model > 运行时默认模型
+  const model = asString(payload.vlmModel) || asString(vcfg.model)
+    || settings.resolve().defaultModel || payload.model
 
   // 提示词：要求它「只输出提示词」，不要解释；并明确这是本地出图用的技术输入
   const sys = buildSystem(f, 'reverse', rules, asString(payload.hardNote).trim())
@@ -535,13 +543,55 @@ const wrap = (fn) => async (req, res) => {
   }
 }
 
+// ── 设置：LLM 地址 / 密钥 / 模型 ─────────────────────────────────────────────
+//
+// 安全约定：
+//   - GET 只回「有没有 key」和掩码，绝不回真值
+//   - POST 接受 apiKey，但原样回传掩码时表示「不修改」
+//   - 密钥落单独文件（权限 600），不写进 settings.json
+
+app.get('/api/settings', wrap(async (_req, res) => {
+  res.json({ ok: true, ...settings.publicView() })
+}))
+
+app.post('/api/settings', wrap(async (req, res) => {
+  const body = req.body || {}
+  const next = settings.save({
+    baseURL: body.baseURL,
+    apiKey: body.apiKey,
+    defaultModel: body.defaultModel,
+    models: body.models,
+  })
+  // 保存后顺手探测一次，让界面立刻知道配得对不对
+  let probeInfo = null
+  try {
+    probeInfo = await llm.probe()
+  } catch (e) {
+    probeInfo = { ok: false, error: String(e.message || e) }
+  }
+  res.json({ ok: true, saved: true, settings: settings.publicView(), probe: probeInfo })
+}))
+
+// 拉取模型列表。支持临时覆盖（还没保存也能测）
+app.post('/api/models', wrap(async (req, res) => {
+  const body = req.body || {}
+  const r = await llm.listModels({
+    baseURL: asString(body.baseURL).trim() || undefined,
+    apiKey: body.apiKey === undefined ? undefined : String(body.apiKey),
+  })
+  res.json({ ok: r.ok, base: r.base, models: r.models || [], count: (r.models || []).length, error: r.error })
+}))
+
 app.get('/api/config', wrap(async (_req, res) => {
+  const s = settings.resolve()
   res.json({
     ok: true,
     families: familyList(),
     camera: config.camera,
-    models: config.llm.models || [],
-    defaultModel: config.llm.defaultModel,
+    models: s.models || [],
+    defaultModel: s.defaultModel || '',
+    llmBase: s.baseURL || '',
+    hasApiKey: !!s.apiKey,
     rulesPath,
   })
 }))
@@ -716,8 +766,9 @@ app.post('/api/probe', wrap(async (_req, res) => {
 // 静态界面
 app.use('/', express.static(join(HERE, 'public')))
 
-const port = Number(config.server?.port) || 33002
-const host = config.server?.host || '0.0.0.0'
+// 端口：环境变量 PORT 优先（容器编排常用），否则用 config.json
+const port = Number(process.env.PORT) || Number(config.server?.port) || 33002
+const host = process.env.HOST || config.server?.host || '0.0.0.0'
 
 app.listen(port, host, () => {
   console.log(`[web] 监听 http://${host}:${port}`)

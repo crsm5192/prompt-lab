@@ -11,6 +11,10 @@ __pycache__/
 .venv/
 venv/
 
+# 运行时设置（界面里保存的 API 地址/密钥/模型，含密钥，绝不可入库）
+web/data/
+data/
+
 # 模型权重（体积大，不入库）
 *.onnx
 *.safetensors

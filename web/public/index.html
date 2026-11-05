@@ -149,6 +149,7 @@
     <button class="tab" data-tab="tags">⑤ 标签</button>
     <button class="tab" data-tab="chars">⑥ 角色</button>
     <button class="tab" data-tab="rules">⚙ 规则</button>
+    <button class="tab" data-tab="settings">🔌 设置</button>
   </div>
 
   <div class="cols">
@@ -177,7 +178,10 @@
       <div class="card">
         <h3>高级</h3>
         <label>文本模型</label>
-        <select id="model"></select>
+        <div style="display:flex;gap:6px;align-items:center">
+          <select id="model" style="flex:1"></select>
+          <button class="btn" id="openSettings" title="配置 API 地址 / 密钥 / 模型">⚙</button>
+        </div>
         <label>额外要求（会并入系统提示）</label>
         <input id="hardNote" placeholder="例：不要出现任何建筑">
         <div class="row">
@@ -309,6 +313,49 @@
       </div>
 
       <!-- ⚙ 规则 / 预设 -->
+      <div class="card hidden" id="card-settings">
+        <h3>🔌 模型服务设置</h3>
+        <div class="hint" style="margin-bottom:10px">
+          填任何 OpenAI 兼容服务的地址与密钥。保存后立即生效，无需重启。
+          密钥只存在服务端，保存后不可回显。
+        </div>
+
+        <label>API 地址（baseURL，通常以 /v1 结尾）</label>
+        <input id="setBase" placeholder="例：http://127.0.0.1:11434/v1 或 https://api.openai.com/v1">
+
+        <label>API Key <span id="setKeyState" class="hint"></span></label>
+        <div style="display:flex;gap:6px">
+          <input id="setKey" type="password" placeholder="留空表示不修改" style="flex:1">
+          <button class="btn" id="setKeyClear" title="清除已保存的密钥">清除</button>
+        </div>
+
+        <div class="row">
+          <button class="btn" id="fetchModels">获取模型列表</button>
+          <button class="btn primary" id="saveSettings">保存</button>
+        </div>
+        <div id="settingsOut"></div>
+
+        <label style="margin-top:14px">默认模型</label>
+        <div style="display:flex;gap:6px">
+          <select id="setModelSel" style="flex:1"></select>
+          <input id="setModelManual" placeholder="或手填模型名" style="flex:1">
+        </div>
+        <div class="hint" style="margin-top:6px">
+          下拉框来自「获取模型列表」；服务不支持该接口时可直接手填模型名。
+        </div>
+
+        <label style="margin-top:14px">已保存的模型清单（可选，手动维护）</label>
+        <textarea id="setModelsJson" class="mono" style="min-height:90px"
+          placeholder='留空则使用服务返回的列表。手填格式（JSON 数组）：
+[
+  {"id": "gpt-4o-mini", "label": "GPT-4o mini"},
+  {"id": "claude-sonnet-4", "label": "Claude Sonnet 4"}
+]'></textarea>
+        <div class="row">
+          <button class="btn" id="useFetched">把刚才获取的列表填进来</button>
+        </div>
+      </div>
+
       <div class="card hidden" id="card-rules">
         <h3>⚙ 提示词规则与预设</h3>
         <div class="hint" style="margin-bottom:8px">
@@ -439,11 +486,13 @@ function setTab(tab) {
   document.querySelectorAll('.tab').forEach((t) => {
     t.classList.toggle('on', t.dataset.tab === tab);
   });
-  for (const t of ['gen', 'reverse', 'refine', 'iterate', 'tags', 'chars', 'rules']) {
+  for (const t of ['gen', 'reverse', 'refine', 'iterate', 'tags', 'chars', 'rules', 'settings']) {
     $('card-' + t).classList.toggle('hidden', t !== tab);
   }
   // 规则页首次进入时加载
   if (tab === 'rules' && !rulesData) loadRules();
+  // 设置页每次进入都重读（可能在别处改过）
+  if (tab === 'settings') loadSettings();
 }
 document.querySelectorAll('.tab').forEach((t) => {
   if (t.dataset.tab) t.onclick = () => setTab(t.dataset.tab);
@@ -1104,6 +1153,192 @@ function escapeHtml(s) {
 }
 function escapeAttr(s) { return escapeHtml(s); }
 
+// ── 设置：API 地址 / 密钥 / 模型 ─────────────────────────────────────────────
+//
+// 关键约定：密钥永远不会从服务端回显。输入框留空 = 不修改，
+// 想清除就点「清除」再保存。
+let fetchedModels = [];
+
+function setOut(html, kind) {
+  const el = $('settingsOut');
+  el.className = 'note ' + (kind || '');
+  el.innerHTML = html;
+  el.style.display = 'block';
+}
+
+function renderSettingsForm(s) {
+  $('setBase').value = s.baseURL || '';
+  $('setKey').value = '';
+  $('setKey').placeholder = s.hasApiKey ? '已保存（留空则不修改）' : '未设置';
+  $('setKeyState').textContent = s.hasApiKey
+    ? '（来源：' + (s.source && s.source.apiKey === 'env' ? '环境变量' : '设置文件') + '）'
+    : '（未配置）';
+
+  const sel = $('setModelSel');
+  sel.innerHTML = '';
+  const list = (s.models || []).map((m) => (typeof m === 'string' ? { id: m } : m));
+  if (!list.length) {
+    const o = document.createElement('option');
+    o.value = '';
+    o.textContent = '（先获取模型列表）';
+    sel.appendChild(o);
+  } else {
+    list.forEach((m) => {
+      const o = document.createElement('option');
+      o.value = m.id;
+      o.textContent = (m.label ? m.label + ' · ' : '') + m.id;
+      if (m.id === s.defaultModel) o.selected = true;
+      sel.appendChild(o);
+    });
+    if (s.defaultModel && !list.some((m) => m.id === s.defaultModel)) {
+      const o = document.createElement('option');
+      o.value = s.defaultModel;
+      o.textContent = s.defaultModel + '（当前默认，不在列表中）';
+      o.selected = true;
+      sel.appendChild(o);
+    }
+  }
+  $('setModelManual').value = s.defaultModel || '';
+  $('setModelsJson').value = (s.models && s.models.length)
+    ? JSON.stringify(s.models, null, 2)
+    : '';
+}
+
+async function loadSettings() {
+  try {
+    const r = await api('/settings');
+    renderSettingsForm(r);
+    if (!r.baseURL || !r.hasApiKey) {
+      setOut('还没配置好。填 API 地址与密钥后点「获取模型列表」验证，再「保存」。', 'warn');
+    }
+  } catch (e) {
+    setOut('读取设置失败：' + escapeHtml(String(e.message || e)), 'err');
+  }
+}
+
+// 高级卡片里的 ⚙ 按钮 → 切到设置页
+$('openSettings').onclick = () => {
+  setTab('settings');
+  loadSettings();
+};
+
+// 获取模型列表：用当前输入框里的值先测，不必先保存
+$('fetchModels').onclick = async () => {
+  const base = $('setBase').value.trim();
+  const key = $('setKey').value;
+  if (!base) { setOut('先填 API 地址。', 'warn'); return; }
+  setOut('<span class="spin"></span> 正在请求 /models …');
+  try {
+    const r = await post('/models', { baseURL: base, apiKey: key });
+    if (!r.ok) {
+      setOut('获取失败：' + escapeHtml(r.error || '未知错误')
+        + '<br>服务若不支持 /models，可直接手填模型名。', 'err');
+      return;
+    }
+    fetchedModels = r.models || [];
+    setOut('成功，共 ' + fetchedModels.length + ' 个模型。选好默认模型后点「保存」。', 'ok');
+    // 填进下拉框
+    const sel = $('setModelSel');
+    sel.innerHTML = '';
+    fetchedModels.forEach((m) => {
+      const o = document.createElement('option');
+      o.value = m.id;
+      o.textContent = m.id;
+      sel.appendChild(o);
+    });
+  } catch (e) {
+    setOut('获取失败：' + escapeHtml(String(e.message || e)), 'err');
+  }
+};
+
+// 把刚获取的列表填进「模型清单」文本域
+$('useFetched').onclick = () => {
+  if (!fetchedModels.length) { setOut('先点「获取模型列表」。', 'warn'); return; }
+  $('setModelsJson').value = JSON.stringify(fetchedModels.map((m) => ({ id: m.id })), null, 2);
+  setOut('已填入 ' + fetchedModels.length + ' 个模型，记得点「保存」。', 'ok');
+};
+
+// 下拉框选中 → 同步到手填框
+$('setModelSel').onchange = () => {
+  const v = $('setModelSel').value;
+  if (v) $('setModelManual').value = v;
+};
+
+$('setKeyClear').onclick = () => {
+  $('setKey').value = '';
+  $('setKey').dataset.clear = '1';
+  setOut('已标记清除密钥，点「保存」生效。', 'warn');
+};
+
+$('saveSettings').onclick = async () => {
+  const base = $('setBase').value.trim();
+  if (!base) { setOut('API 地址不能为空。', 'warn'); return; }
+
+  const body = {
+    baseURL: base,
+    defaultModel: ($('setModelManual').value.trim() || $('setModelSel').value || '').trim(),
+  };
+
+  // 密钥：只有真的输入了才提交；没输入就不传（保持原值）
+  const keyInput = $('setKey').value;
+  if (keyInput && keyInput.trim()) body.apiKey = keyInput.trim();
+  else if ($('setKey').dataset.clear === '1') body.apiKey = '';
+
+  // 模型清单：文本域有内容才用，且必须是合法 JSON
+  const mj = $('setModelsJson').value.trim();
+  if (mj) {
+    try {
+      const parsed = JSON.parse(mj);
+      if (!Array.isArray(parsed)) throw new Error('必须是数组');
+      body.models = parsed;
+    } catch (e) {
+      setOut('模型清单不是合法 JSON 数组：' + escapeHtml(String(e.message || e)), 'err');
+      return;
+    }
+  } else if (fetchedModels.length) {
+    body.models = fetchedModels.map((m) => ({ id: m.id }));
+  }
+
+  setOut('<span class="spin"></span> 保存中…');
+  try {
+    const r = await post('/settings', body);
+    delete $('setKey').dataset.clear;
+    renderSettingsForm(r.settings);
+    await refreshModelSelect(r.settings);
+
+    const p = r.probe || {};
+    if (p.ok) {
+      setOut('已保存。连通性正常，服务返回 ' + (p.available || 0) + ' 个模型。', 'ok');
+    } else {
+      setOut('已保存，但连通性检查失败：' + escapeHtml(p.error || '未知错误')
+        + '<br>配置已写入，可修正后重试。', 'warn');
+    }
+  } catch (e) {
+    setOut('保存失败：' + escapeHtml(String(e.message || e)), 'err');
+  }
+};
+
+/** 刷新「高级」卡片里的模型下拉（生成/润色/迭代都用它）。 */
+async function refreshModelSelect(s) {
+  const sel = $('model');
+  const list = (s && s.models) || [];
+  sel.innerHTML = '';
+  list.forEach((m) => {
+    const mm = typeof m === 'string' ? { id: m } : m;
+    const o = document.createElement('option');
+    o.value = mm.id;
+    o.textContent = (mm.label ? mm.label + ' · ' : '') + mm.id;
+    if (mm.id === s.defaultModel) o.selected = true;
+    sel.appendChild(o);
+  });
+  if (!list.length) {
+    const o = document.createElement('option');
+    o.value = '';
+    o.textContent = '（未配置模型，去「设置」里添加）';
+    sel.appendChild(o);
+  }
+}
+
 // ── 启动 ───────────────────────────────────────────────────────────────────
 
 /** 重新拉族列表（规则改动后预设会变，需要刷）。 */
@@ -1114,6 +1349,7 @@ async function initFams() {
     state.family = state.families[0] ? state.families[0].id : 'generic';
   }
   renderFams();
+  await refreshModelSelect({ models: cfg.models || [], defaultModel: cfg.defaultModel });
   return cfg;
 }
 
@@ -1125,15 +1361,7 @@ async function initFams() {
     state.camCfg = cfg.camera;
     renderFams();
 
-    const sel = $('model');
-    sel.innerHTML = '';
-    (cfg.models || []).forEach((m) => {
-      const o = document.createElement('option');
-      o.value = m.id;
-      o.textContent = (m.label || m.id) + ' · ' + m.id;
-      if (m.id === cfg.defaultModel) o.selected = true;
-      sel.appendChild(o);
-    });
+    await refreshModelSelect({ models: cfg.models || [], defaultModel: cfg.defaultModel });
 
     if (cfg.camera && cfg.camera.default) {
       Object.assign(state.cam, cfg.camera.default);
