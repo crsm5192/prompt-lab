@@ -1,0 +1,9 @@
+# WD14 反推服务依赖
+#
+# 版本固定：102 是 Celeron 3855U（无 AVX-512），onnxruntime 1.31.x 的 wheel
+# 实测可在其上运行（1.31.0 已在 102 上装好验证过）。
+fastapi==0.115.6
+uvicorn[standard]==0.32.1
+onnxruntime==1.31.0
+pillow==11.0.0
+numpy==2.1.3

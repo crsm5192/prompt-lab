@@ -1,0 +1,17 @@
+{
+  "name": "prompt-lab-web",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "提示词工作台 NAS 版 —— 独立 Web 服务，NSFW 反推走本地 WD14",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "express": "^4.21.2"
+  }
+}

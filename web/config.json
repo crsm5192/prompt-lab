@@ -1,0 +1,485 @@
+{
+  "_comment": "prompt-lab NAS 版配置。与本机 DSH 插件版共享 prompt_rules.json 的族规则，但去掉 DSH 专有的 NAS/VLM 段。改这个文件重启容器生效。",
+  "server": {
+    "port": 33002,
+    "host": "0.0.0.0"
+  },
+  "llm": {
+    "_comment": "LLM 网关（OpenAI 兼容）。baseURL 可用环境变量 LLM_BASE_URL 覆盖；key 从环境变量读取，不要写进本文件。",
+    "baseURL": "http://127.0.0.1:7863/v1",
+    "apiKeyEnv": "WORKBUDDY_API_KEY",
+    "defaultModel": "cn:deepseek-v4.1-flash",
+    "models": [
+      {
+        "id": "cn:deepseek-v4.1-flash",
+        "label": "DeepSeek V4.1 Flash（默认）",
+        "contextWindow": 1000000,
+        "maxTokens": 384000
+      },
+      {
+        "id": "cn:kimi-k3-1",
+        "label": "Kimi K3",
+        "contextWindow": 256000,
+        "maxTokens": 32000
+      },
+      {
+        "id": "cn:deepseek-v4-flash",
+        "label": "DeepSeek V4 Flash",
+        "contextWindow": 1000000,
+        "maxTokens": 32000
+      },
+      {
+        "id": "cn:deepseek-v4-pro",
+        "label": "DeepSeek V4 Pro",
+        "contextWindow": 1000000,
+        "maxTokens": 384000
+      },
+      {
+        "id": "cn:glm-5.3-flash",
+        "label": "GLM 5.3 Flash",
+        "contextWindow": 1000000,
+        "maxTokens": 131072
+      },
+      {
+        "id": "cn:glm-5.3",
+        "label": "GLM 5.3",
+        "contextWindow": 1000000,
+        "maxTokens": 131072
+      },
+      {
+        "id": "cn:kimi-k2.8-preview",
+        "label": "Kimi K2.8 Preview",
+        "contextWindow": 256000,
+        "maxTokens": 32000
+      }
+    ],
+    "temperature": {
+      "gen": 0.8,
+      "refine": 0.4,
+      "reverse": 0.4,
+      "iterate": 0.4
+    },
+    "maxTokens": 4000,
+    "timeoutSeconds": 180,
+    "baseURLEnv": "LLM_BASE_URL"
+  },
+  "vlm": {
+    "_comment": "反推第一优先：用多模态模型直接看图；拒答/失败才降级 WD14。",
+    "enabled": true,
+    "model": "",
+    "_modelNote": "留空则跟随 llm.defaultModel。需选一个支持 vision 的模型。",
+    "temperature": 0.3,
+    "maxTokens": 1200,
+    "timeoutSeconds": 120,
+    "_timeoutNote": "带图请求较慢，留足 120s；超时则降级 WD14",
+    "fallbackToWd14": true,
+    "_fallbackNote": "VLM 拒答或失败时是否降级 WD14。关掉则反推直接失败。"
+  },
+  "wd14": {
+    "_comment": "WD14 微服务。反推的第二通道 —— VLM 拒答 NSFW 时用它兜底。",
+    "host": "http://host.docker.internal:33001",
+    "_hostNote": "host.docker.internal = 宿主机（compose extra_hosts 映射为 host-gateway）。容器内不能写 127.0.0.1。",
+    "threshold": 0.35,
+    "charThreshold": 0.85,
+    "top": 80,
+    "timeoutSeconds": 120
+  },
+  "booru": {
+    "_comment": "Danbooru 查询（公开 API）。若网络受限可填 proxy。",
+    "enabled": true,
+    "baseURL": "https://danbooru.donmai.us",
+    "proxy": "",
+    "_proxyNote": "留空直连；被墙时填 http://127.0.0.1:7890（clash 起来后）",
+    "timeoutSeconds": 30,
+    "maxPosts": 8,
+    "userAgent": "prompt-lab-nas/1.0"
+  },
+  "viking": {
+    "_comment": "OpenViking 语义检索（可选）。不需要就设 enabled=false。地址按自己的部署填写。",
+    "apiKeyEnv": "OPENVIKING_API_KEY",
+    "active": "compliance",
+    "instances": [
+      {
+        "name": "compliance",
+        "baseURL": "http://127.0.0.1:1933"
+      },
+      {
+        "name": "nsfw",
+        "baseURL": "http://127.0.0.1:1934"
+      }
+    ],
+    "maxRefs": 5,
+    "refTextChars": 800,
+    "timeoutMs": 60000,
+    "mode": "",
+    "readLevel": "",
+    "enabled": false
+  },
+  "camera": {
+    "_comment": "相机角度映射。吸收自 ComfyUI_VNCCS_Utils，词是 Multiple-Angles LoRA 的标准写法，不要改。",
+    "includeTrigger": false,
+    "trigger": "<sks>",
+    "style": "standard",
+    "方位": {
+      "0": {
+        "label": "正面",
+        "standard": "front view",
+        "generic": "from the front"
+      },
+      "45": {
+        "label": "右前 3/4",
+        "standard": "front-right quarter view",
+        "generic": "front-right three-quarter angle"
+      },
+      "90": {
+        "label": "右侧",
+        "standard": "right side view",
+        "generic": "from the right side"
+      },
+      "135": {
+        "label": "右后 3/4",
+        "standard": "back-right quarter view",
+        "generic": "back-right three-quarter angle"
+      },
+      "180": {
+        "label": "背面",
+        "standard": "back view",
+        "generic": "from the back"
+      },
+      "225": {
+        "label": "左后 3/4",
+        "standard": "back-left quarter view",
+        "generic": "back-left three-quarter angle"
+      },
+      "270": {
+        "label": "左侧",
+        "standard": "left side view",
+        "generic": "from the left side"
+      },
+      "315": {
+        "label": "左前 3/4",
+        "standard": "front-left quarter view",
+        "generic": "front-left three-quarter angle"
+      }
+    },
+    "仰俯": {
+      "-30": {
+        "label": "低角度仰拍",
+        "standard": "low-angle shot",
+        "generic": "low angle"
+      },
+      "0": {
+        "label": "平视",
+        "standard": "eye-level shot",
+        "generic": "eye level"
+      },
+      "30": {
+        "label": "略高机位",
+        "standard": "elevated shot",
+        "generic": "elevated angle"
+      },
+      "60": {
+        "label": "高角度俯拍",
+        "standard": "high-angle shot",
+        "generic": "high angle"
+      }
+    },
+    "景别": {
+      "close-up": {
+        "label": "特写（脸）",
+        "standard": "close-up",
+        "generic": "close-up",
+        "native": true,
+        "hot": true
+      },
+      "medium shot": {
+        "label": "中景（腰以上）",
+        "standard": "medium shot",
+        "generic": "medium shot",
+        "native": true,
+        "hot": true
+      },
+      "wide shot": {
+        "label": "全景",
+        "standard": "wide shot",
+        "generic": "wide shot",
+        "native": true,
+        "hot": true
+      },
+      "extreme close-up": {
+        "label": "大特写（局部）",
+        "standard": "extreme close-up",
+        "generic": "extreme close-up",
+        "native": false,
+        "hot": true
+      },
+      "medium close-up": {
+        "label": "中近景（胸以上）",
+        "standard": "medium close-up",
+        "generic": "medium close-up",
+        "native": false,
+        "hot": true
+      },
+      "cowboy shot": {
+        "label": "牛仔镜头（胯以上）",
+        "standard": "cowboy shot",
+        "generic": "cowboy shot",
+        "native": false,
+        "hot": true
+      },
+      "full body": {
+        "label": "全身",
+        "standard": "full body",
+        "generic": "full body",
+        "native": false,
+        "hot": true
+      },
+      "medium long shot": {
+        "label": "中全景（膝以上）",
+        "standard": "medium long shot",
+        "generic": "medium long shot",
+        "native": false,
+        "hot": true
+      },
+      "extreme long shot": {
+        "label": "大全景（人很小）",
+        "standard": "extreme long shot",
+        "generic": "extreme long shot",
+        "native": false,
+        "hot": true
+      },
+      "establishing shot": {
+        "label": "定场镜头",
+        "standard": "establishing shot",
+        "generic": "establishing shot",
+        "native": false,
+        "hot": true
+      },
+      "macro shot": {
+        "label": "微距",
+        "standard": "macro shot",
+        "generic": "macro shot",
+        "native": false,
+        "hot": false
+      }
+    },
+    "补充": {
+      "position": "after",
+      "groups": [
+        {
+          "id": "angle",
+          "label": "A 特殊角度 / 机位",
+          "single": true,
+          "multi": false,
+          "items": [
+            {
+              "tag": "dutch angle",
+              "label": "德式倾角",
+              "hot": true,
+              "alias": "tilted camera, canted angle"
+            },
+            {
+              "tag": "over the shoulder",
+              "label": "过肩",
+              "hot": true,
+              "alias": "OTS"
+            },
+            {
+              "tag": "pov",
+              "label": "主观视角",
+              "hot": true,
+              "alias": "first-person view"
+            },
+            {
+              "tag": "aerial view",
+              "label": "航拍鸟瞰",
+              "hot": true,
+              "alias": "drone shot, bird's eye view",
+              "elevationConflict": true
+            },
+            {
+              "tag": "god's eye view",
+              "label": "上帝视角",
+              "hot": true,
+              "alias": "top-down view",
+              "elevationConflict": true
+            },
+            {
+              "tag": "ground level",
+              "label": "贴地机位",
+              "hot": false,
+              "alias": "floor level",
+              "elevationConflict": true
+            },
+            {
+              "tag": "upside down",
+              "label": "倒置视角",
+              "hot": false,
+              "alias": "inverted angle",
+              "elevationConflict": true
+            },
+            {
+              "tag": "over the body shot",
+              "label": "过身",
+              "hot": false
+            }
+          ]
+        },
+        {
+          "id": "composition",
+          "label": "B 构图",
+          "single": false,
+          "multi": true,
+          "items": [
+            {
+              "tag": "negative space",
+              "label": "留白",
+              "hot": true,
+              "alias": "empty space composition"
+            },
+            {
+              "tag": "split screen",
+              "label": "分屏",
+              "hot": false
+            },
+            {
+              "tag": "vertical shot",
+              "label": "竖构图",
+              "hot": false,
+              "alias": "portrait orientation"
+            },
+            {
+              "tag": "hero shot",
+              "label": "英雄时刻",
+              "hot": false,
+              "alias": "money shot"
+            },
+            {
+              "tag": "split face shot",
+              "label": "劈脸",
+              "hot": false,
+              "alias": "half face"
+            }
+          ]
+        },
+        {
+          "id": "lens",
+          "label": "C 光学 / 景深（可叠加）",
+          "single": false,
+          "multi": true,
+          "items": [
+            {
+              "tag": "shallow depth of field",
+              "label": "浅景深",
+              "hot": true,
+              "alias": "bokeh background"
+            },
+            {
+              "tag": "bokeh",
+              "label": "背景虚化",
+              "hot": true
+            },
+            {
+              "tag": "soft focus",
+              "label": "柔焦",
+              "hot": true,
+              "alias": "diffusion filter, dreamy glow"
+            },
+            {
+              "tag": "vignette",
+              "label": "暗角",
+              "hot": true,
+              "alias": "vignetting"
+            },
+            {
+              "tag": "tilt-shift",
+              "label": "移轴（微缩感）",
+              "hot": true,
+              "alias": "tilt-shift effect, miniature effect"
+            },
+            {
+              "tag": "wide angle lens",
+              "label": "广角",
+              "hot": true
+            },
+            {
+              "tag": "telephoto lens",
+              "label": "长焦（空间压缩）",
+              "hot": true,
+              "alias": "compressed perspective"
+            },
+            {
+              "tag": "fisheye",
+              "label": "鱼眼",
+              "hot": false,
+              "alias": "fisheye lens, fisheye distortion"
+            },
+            {
+              "tag": "deep focus",
+              "label": "深焦（全清晰）",
+              "hot": false,
+              "alias": "hyperfocal"
+            },
+            {
+              "tag": "out of focus",
+              "label": "刻意失焦",
+              "hot": false,
+              "alias": "bokeh blur"
+            },
+            {
+              "tag": "tunnel vision",
+              "label": "隧道视野",
+              "hot": false,
+              "alias": "peripheral blur"
+            },
+            {
+              "tag": "limbo",
+              "label": "纯黑背景",
+              "hot": false,
+              "alias": "limbo shot, black background, void"
+            }
+          ]
+        },
+        {
+          "id": "gaze",
+          "label": "视线 / 主体朝向",
+          "single": true,
+          "multi": false,
+          "items": [
+            {
+              "tag": "looking at viewer",
+              "label": "直视镜头",
+              "hot": true,
+              "alias": "breaking the fourth wall"
+            },
+            {
+              "tag": "looking away",
+              "label": "侧开视线",
+              "hot": false
+            },
+            {
+              "tag": "looking back",
+              "label": "回头看",
+              "hot": false
+            },
+            {
+              "tag": "looking down",
+              "label": "低头",
+              "hot": false
+            },
+            {
+              "tag": "looking up",
+              "label": "抬头",
+              "hot": false
+            }
+          ]
+        }
+      ]
+    },
+    "default": {
+      "azimuth": 0,
+      "elevation": 0,
+      "distance": "medium shot"
+    }
+  }
+}

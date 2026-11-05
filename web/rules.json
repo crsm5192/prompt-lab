@@ -1,0 +1,322 @@
+{
+ "_comment": "族规则（从本机 prompt_rules.json 抽取，NAS 版共享同一套）",
+ "families": {
+  "noobai": {
+   "label": "光辉系 / NoobAI",
+   "kind": "tag",
+   "separator": "space",
+   "negative": "worst quality, bad quality, low quality, lowres, bad anatomy, bad hands, extra digits, fewer digits, jpeg artifacts, signature, watermark, username, artist name, blurry",
+   "order": "年份(year 2024) -> 人数(1girl/solo) -> 角色 -> 作品 -> 一般标签",
+   "rules": [
+    "【正向不带质量词】不要写 masterpiece / best quality / absurdres / very aesthetic 等质量标签；直接从年份、人数、角色写起。负面里的 worst quality / low quality 保留",
+    "全部使用 Danbooru 标签，逗号+空格分隔",
+    "单词之间用空格分隔（long hair / one-piece swimsuit），不要下划线写法",
+    "正向可用 (tag:1.2) 加权，LoRA 用 <lora:名称:0.8>",
+    "不要混入自然语言长句",
+    "禁止输出画师标签（artist: 前缀、画师名），禁止使用 BREAK 等流水线语法"
+   ],
+   "params": {
+    "steps": "28-32",
+    "cfg": "5-7",
+    "sampler": "Euler a / DPM++ 2M",
+    "size": "832x1216 / 1216x832"
+   }
+  },
+  "anima": {
+   "label": "Anima",
+   "kind": "tag+NL",
+   "negative": "worst quality, low quality, lowres, bad anatomy, bad hands, missing fingers, extra fingers, fused fingers, extra digits, extra limbs, extra arms, extra legs, twisted limbs, malformed limbs, disconnected limbs, blurry, artist name, jpeg artifacts, chromatic aberration",
+   "order": "[年份] -> [人数] -> [角色] -> [作品] -> [服饰/基础动作标签] -> [自然语言：外观细节/动作] -> [自然语言：画风/环境/光影]",
+   "rules": [
+    "【格式红线】标签全小写、单词间用空格而非下划线；只有 score_* 保留下划线。角色名/作品名按英文习惯首字母大写",
+    "【混排架构】前半段用逗号分隔的短标签写基础元素（人数/角色/作品/服饰/简单动作），后半段平滑过渡到自然语言，不要写成密集长串",
+    "【强制外观描述】一旦出现角色名，紧随其后必须用自然语言描述其发色、瞳色与核心服装；绝不允许只写名字不写特征。公开角色「名字即锚」——只写确定知道的维度，不确定的维度不要编造（写了会画错）；原创角色必须给固定身份块（发色+发型+瞳色+肤色+体型+签名特征）",
+    "【动态分配】简单物品/姿势/服饰用短标签；复杂的物体互动、氛围、尤其画风与光影，必须用 2-3 句完整自然语言",
+    "【分行排版】用真换行分段，每段末尾保留逗号；绝不要输出无换行的密集文本",
+    "【画师标签禁止】绝不输出任何画师标签（artist: 前缀、@ 前缀、画师名）；用户提到画师风格时，改为用具体视觉特征（线条、色块、笔刷、配色、光影）表达",
+    "【流水线语法禁止】禁止 // 注释等控制标记；BREAK 也尽量避免（有被当画面文字烘焙的风险），确需时负面必须加 text, english text, letters, words",
+    "严禁 NoobAI 残留词：very awa / worst aesthetic / very aesthetic（Anima 不认）",
+    "年份用 year 2025，时期用 newest / recent / mid / early / old",
+    "加权比 SDXL 要大才生效：(tag:1.5) 或更高才有效，低于 1.0 的正权重几乎无效；多层括号约等于强加强",
+    "【IP 角色写法】高置信度识别出角色时可直接写角色名及其来源作品；不能确认时只描述可见特征，不得猜测或编造名称。写出角色名后仍必须描述当前画面中的实际外貌、服装与姿势，不能只靠名字",
+    "【日文姓名语序】Danbooru 的日文角色名是「姓前名后」：安和すばる → awa subaru（不是 subaru awa），初音未来 → hatsune miku，博丽灵梦 → hakurei reimu。角色名必须先在记忆里按此惯例还原，写反了标签不存在，角色锚点与 LoRA 触发词都会失效。不确定语序时只用可见特征描述，不写名字",
+    "【负面按意图预测】不要用固定清单：先按画面内容选基线，再扫正面按可能引发的问题追加，并做反向保护与删误杀项。详见共享公理块的负面纪律"
+   ],
+   "sharedBlocks": [
+    "nlVisualDiscipline",
+    "concreteDiscipline",
+    "animaAxioms"
+   ],
+   "styles": {
+    "faithful": {
+     "label": "忠实还原（反推）",
+     "rules": [
+      "【本次为忠实还原版】客观、准确地还原输入内容，不添加过度脑补的元素",
+      "自然语言部分如实描述画面中真实存在的色彩、光影与画风，不作夸张处理",
+      "只描述确实能看到的内容；不确定的元素不要编造",
+      "【反推要点】先逐项识别再落词：主体与数量、外观与服装、姿势与动作、环境与物体、空间关系、景别与角度、视觉焦点、光线与材质。每个维度写具体值，禁概括词（对照泛称→具体化表）",
+      "反推时保持原图的光线与构图，不要重新布光或改变机位；遮挡与不可见部分不要推测"
+     ]
+    },
+    "epic": {
+     "label": "震撼美化（润色 / 生成）",
+     "rules": [
+      "【本次为震撼美化版】在原设基础上提升视觉完成度与画面张力，不改变主体身份、数量、外貌要点、服装要点、主要动作与核心环境",
+      "自然语言部分用长句描绘光影与美术质感（发挥 Qwen 文本编码器的长句理解优势），每句话都要有可执行的视觉信息",
+      "加入镜头语言：描述构图与镜头感，如 dynamic angle、depth of field、low-angle view，但不得与其它摄影要求冲突",
+      "可对核心美感元素加权，例如 (dynamic angle:1.5)、(intricate details:1.3)，用权重突出画面重点（注意 Anima 低于 1.0 的权重几乎无效）",
+      "增强优先解决视觉焦点与画面层级，而不是简单增加背景细节与装饰",
+      "【结构可升级为模板 C】成品级/自动化场景改用分号分层叙事：角色四件套（外观+服装每件+动作+表情）单角色 50-80 词，用 rather than / avoids 排除歧义，反摆拍美学（focused on their own actions rather than looking at the camera, unposed, candid），末段以 evoking an atmosphere of X 收尾"
+     ]
+    }
+   },
+   "modeStyle": {
+    "_comment": "按任务模式自动选版：反推用忠实还原，生成/润色/迭代用震撼美化。",
+    "reverse": "faithful",
+    "gen": "epic",
+    "refine": "epic",
+    "iterate": "epic"
+   },
+   "params": {
+    "steps": "30-50（Turbo 8-12）",
+    "cfg": "4-5（Turbo 1）",
+    "sampler": "er_sde 默认 / euler_a 柔和 / dpmpp_2m_sde_gpu 多变",
+    "size": "512² ~ 1536²"
+   }
+  },
+  "krea2": {
+   "label": "Krea 2",
+   "kind": "NL",
+   "negative": "multiple girls, chibi, realistic, photo, flat shading, cel shading, bad hands, missing fingers, extra fingers, fused fingers, extra limbs, extra arms, cropped head, cropped feet, lowres, blurry, dull colors, washed out, messy lines",
+   "order": "主体数量与身份 -> 外貌与服装 -> 姿势与动作 -> 表情与视线 -> 主体互动 -> 场景与环境 -> 物体与空间关系 -> 景别与拍摄角度 -> 构图与透视 -> 景深与焦点 -> 光线与颜色 -> 材质与视觉效果 -> 画幅比例",
+   "sharedBlocks": [
+    "nlVisualDiscipline",
+    "concreteDiscipline"
+   ],
+   "rules": [
+    "【纯自然语言】Krea 2 用 Qwen3-VL-4B 作文本编码器，能理解完整语句与上下文关系。提示词以结构明确的英文自然语言为主，不要依赖大量零散标签、重复质量词或关键词堆砌",
+    "【信息密度】每句话都要承担明确功能：确定主体、动作、位置、视觉焦点、光源或材质。删除不改变生成结果的套话、同义反复与泛化赞美。允许很长，但新增内容必须带来可执行的视觉信息",
+    "【描述顺序】按 order 列出的顺序连贯组织，让句子读起来是一段有逻辑的描写，而不是词条堆叠",
+    "【简洁优先】描述保持足够具体，但避免无意义地拉长文本；复杂的人物互动、空间关系、光线与场景优先用完整语句表达",
+    "【红线词】绝对禁止 3d / render / octane / unreal engine / realistic / photo / photorealistic（会把 2.5D 拉成 3D 写实）",
+    "【不用质量词】本族不使用 masterpiece / best quality / score_* / highres 等质量标签，也不用 (tag:1.5) 式加权；质量靠具体的视觉描述体现",
+    "【触发器原样保留】LoRA 触发器写错等于没挂，必须原样保留用户给的触发器",
+    "【Turbo 路线】8 步 / CFG 1.0 时禁用负面词；负面词只在 Raw 路线使用",
+    "【IP 角色写法】高置信度识别出角色时写「[Character] from [film / game / anime / comic / television series]」，来源要具体到作品名；不能确认时只描述可见特征，不得猜测名称。写出角色名后仍必须描述当前画面中的实际外貌、发型、服装与姿势",
+    "【日文姓名语序】Danbooru 的日文角色名是「姓前名后」：安和すばる → awa subaru（不是 subaru awa）。语序写反标签就不存在，角色锚点失效；不确定语序时只描述可见特征，不写名字",
+    "【画幅】用户指定画幅方向或比例时必须准确保留：portrait orientation / landscape orientation / square composition / 1:1 / 4:3 / 3:2 / 16:9 / 9:16",
+    "【画质要求】用户要求清晰时用 sharp details、clear facial features、well-defined textures、high visual clarity 等具体描述，而不是堆砌重复质量词",
+    "禁止输出画师标签，禁止使用 BREAK 等流水线语法"
+   ],
+   "styles": {
+    "faithful": {
+     "label": "忠实还原（反推）",
+     "rules": [
+      "【本次为忠实还原版】准确还原图像或用户文字要求：完整保留核心主体、外貌、服装、动作、表情、环境、道具、构图、光线与比例",
+      "对图像输入只写可观察到的内容，不推测被遮挡或画面外的信息",
+      "对文字输入只做保证画面清晰可生成所必需的最小补充",
+      "使用准确、自然、连贯的英文，不夸张美化，不添加新的核心情节或对象",
+      "输入本身含非现实结构、强烈风格化或特殊效果时，忠实保留",
+      "忠实版应准确保留原图的照明，不主动重新布光"
+     ]
+    },
+    "epic": {
+     "label": "增强（润色 / 生成）",
+     "rules": [
+      "【本次为增强版】在忠实版的核心设定上提升视觉完成度与画面张力",
+      "不得改变主体身份、数量、年龄层、外貌要点、服装要点、主要动作、人物关系、核心环境与用户指定的比例",
+      "可优化：主体站位、画面层次、构图平衡、镜头角度、景深、焦点、光源方向、明暗对比、色彩协调、材质细节、环境氛围",
+      "可增加少量与原主题一致的辅助元素，但不得加入新的核心人物、事件或改变画面含义",
+      "默认主动设计比基础生成更丰富的光源层级、明暗结构、阴影形状、环境反射与局部色彩变化；除非用户明确要求平光、证件照式照明或极简照明",
+      "对绘画/插画/动画任务，默认补充与媒介一致的笔触、边缘控制、线条、色块与渲染语言，使美术表现有具体结构，而不是只加泛化风格标签",
+      "增强优先解决视觉焦点与层级问题，而不是简单增加背景细节",
+      "所有增强必须具体、可见、能被图像模型执行；不使用「漂亮」「震撼」「高级」「有艺术感」等无法直接生成的空泛评价",
+      "不得为制造视觉冲击而破坏忠实版中的关键细节或用户明确要求"
+     ]
+    }
+   },
+   "modeStyle": {
+    "_comment": "按任务模式自动选版：反推用忠实还原，生成/润色/迭代用增强版。",
+    "reverse": "faithful",
+    "gen": "epic",
+    "refine": "epic",
+    "iterate": "epic"
+   },
+   "params": {
+    "steps": "Turbo 8 / Raw 20-52",
+    "cfg": "Turbo 1.0 / Raw 3.0-4.5",
+    "sampler": "",
+    "size": "1024² 起，细致上 1328²+，全身 1600 高"
+   }
+  },
+  "generic": {
+   "label": "通用",
+   "kind": "tag",
+   "separator": "space",
+   "negative": "worst quality, low quality, lowres, blurry, bad anatomy, bad hands, extra digits, watermark, signature",
+   "order": "主体 -> 角色/作品 -> 风格 -> 细节 -> 背景",
+   "rules": [
+    "【正向不带质量词与安全标签】不要写 masterpiece / best quality / highly detailed 这类质量词，也不写 safe / nsfw 这类安全标签；直接从主体写起。负面里的 worst quality / low quality 保留",
+    "以 Danbooru 标签为主，逗号分隔",
+    "单词之间用空格分隔，不要下划线写法",
+    "正向可用 (tag:1.1) 加权",
+    "不要写自然语言长句",
+    "禁止输出画师标签（artist: 前缀、画师名），禁止使用 BREAK 等流水线语法"
+   ],
+   "params": {
+    "steps": "25-30",
+    "cfg": "5-7",
+    "sampler": "",
+    "size": "832x1216"
+   }
+  },
+  "moss": {
+   "label": "MOSS-Image",
+   "kind": "NL+layout",
+   "separator": "space",
+   "negative": "nsfw, worst quality, bad anatomy, bad hands, missing fingers, extra fingers, fused fingers, extra limbs, extra arms, extra legs, twisted limbs, malformed limbs, watermark, jpeg artifact",
+   "order": "先判形态：普通场景/摄影/插画→caption；动漫角色/booru 风→tag 串；文字位置或多格必须受控→Layout JSON。caption 内部顺序：主体与动作 → 外观 → 场景 → 镜头构图 → 媒介 → 光照 → 材质 → 色调氛围",
+   "rules": [
+    "【三种形态，先选对】① 普通场景、摄影、插画 → 一段连贯的英文 caption（散文，不是标签堆砌）；② 动漫角色、要复用 booru 习惯 → 英文 tag 串；③ 海报、菜单、漫画分格、UI、任何「文字必须落在某处」→ Layout JSON。细节多但位置不敏感时仍然用 caption，不要为了显得专业硬上 Layout",
+    "【caption 顺序】按可见要素展开，不要堆形容词：主体与动作 → 相关外观（年龄、发型、服装、材质）→ 场景/环境 → 镜头与构图（景别、机位、视角）→ 媒介（照片/插画/3D/水彩）→ 光照 → 材质细节 → 色调/氛围。只写画面上看得见的东西，不写参数、不写坐标",
+    "【tag 串顺序】官方指定顺序，写错会明显掉效果：Year → Character → Series → Artist → General。开头不要加 Quality / Score 档（本项目统一不输出质量词）",
+    "【保留用户原意】主体、数量、关系、媒介、风格、排除项、指定要出现的文字，一个都不能改。普通创作空白自己补；只有当缺失决定会实质改变画面时才问",
+    "【画面内文字】要渲染的字符串用引号包住，保持原语言、原标点、原大小写、原断行；想精确断行就显式写 \n 或直接换行，别指望自动排版。文字越长越容易错，海报级大字最稳，整段正文最难",
+    "【区分「引用的句子」和「要渲染的文字」】指令里引号内的内容不一定是画面文字，别一股脑全塞进画面",
+    "【写真实文案，不写占位符】禁止出现 \"headline here\"、\"some explanatory text\"、\"标题文字\" 这类占位。要排版就把断行位置、排列顺序、对齐方式、字号层级、字体风格、颜色、字距都描述清楚",
+    "【极简就保持极简】用户要留白海报，不要自作主张扩成信息图；丰富的 brief 也不要被套成通用的 title/hero/footer 模板",
+    "【明确禁止】❌ 堆砌无意义质量词；❌ 擅自改风格（要写实别加 anime）；❌ 把 JSON 结构、坐标换算、bbox 说明、生成参数写进 caption 字段（那是工具指令不是画面内容）；❌ 从参考图抄无关名字、水印、文案；❌ 编造用户没给的事实性信息",
+    "【Layout 结构】summary{caption, meta[], canvas} + items[]{label, caption, text?, bbox}。summary.caption 写全局画面与风格，不带坐标与 JSON 说明；canvas 取 single / multi_panel / collage；items 是扁平数组，不要再嵌套 children / parent / id / elements。label 只能是 object / character / text，text 元素必须给 text 字段",
+    "【Layout 坐标：只写草稿，不做算术】用草稿格式 bbox_coord_space=\"abs\"、bbox_format=\"xyxy\"，以画布左上角为原点、实际像素 [x_min,y_min,x_max,y_max]，并带 width/height 字段。不要自己换算成中心化坐标——换算由工具完成，模型做算术必然出错。小数边缘允许，工具会自动取整",
+    "【bbox 是位置标注】不是「画个边框/卡片/贴纸」的指令，想要边框得在 caption 里写。多个元素可以共享或重叠 bbox，自然遮挡允许。元素位置描述必须和框对得上，不要一边写「左下角」一边框在右上角",
+    "【尺寸约束】宽高必须是 16 的正整数倍，且与实际生成尺寸一致；默认 1024×1024。只有比例没有像素时按比例选合规值。Layout 的必需 width×height 写在提示词之外（params.size），不要塞进 prompt",
+    "【排版自检】出图前核对：每个可见字符串与需求逐字一致（文字、标点、语言）；断行、字数、字号在指定分辨率下塞得进那个框；塞不进就放大框或重排构图，不许偷偷删文案、不许拉伸字形",
+    "【交付】给正向提示词 + 推荐负面提示词，并注明 steps 50 / CFG 3 / Shift 5 / Euler（ComfyUI 配 sgm_uniform）/ SLG 跳层 22。若用 Layout，正文字段放单行草稿 JSON（会被自动编译），width×height 会由工具带回"
+   ],
+   "params": {
+    "steps": "50（Base 未蒸馏，低于 50 掉质量）",
+    "cfg": "3.0（范围 3.0–6.0；长 prompt 用 3.0，短 prompt 上调）",
+    "sampler": "Euler（ComfyUI 里配 sgm_uniform）",
+    "size": "16 的倍数；1M: 1024x1024 / 1344x768 / 768x1344；1.5M: 1248x1248 / 1536x1024；2M: 1456x1456 / 2048x1024",
+    "shift": "5.0",
+    "slg": "uncond skip，layer 22（22/24/26 均可）"
+   },
+   "_source": "规则依据 OpenMOSS/MOSS-Image 官方 USERGUIDE + skills/moss-image-prompt-enhancer（Apache-2.0）",
+   "styles": {
+    "faithful": {
+     "label": "忠实还原（反推）",
+     "rules": [
+      "准确还原输入：主体、数量、外观、服装、动作、环境、构图、比例、媒介与光照全部照实写，不重新布光、不改机位",
+      "只写可观察到的内容，被遮挡与画面外的信息不推测",
+      "文字按原样保留，不改写不翻译不罗马化"
+     ]
+    },
+    "epic": {
+     "label": "增强（生成 / 润色 / 迭代）",
+     "rules": [
+      "在忠实设定上提升视觉完成度：可优化站位、层次、构图平衡、景深焦点、光源方向、明暗对比、色彩协调、材质细节",
+      "不得改变主体身份、数量、年龄层、外貌要点、服装要点、主要动作与核心环境",
+      "不得为制造冲击而加装饰：不无故加粒子、烟雾、光晕、体积光，不套用通用的电影级模板",
+      "所有增强都要具体可见、能被图像模型执行，不用「漂亮」「震撼」「高级」这类无法生成的空泛评价"
+     ]
+    }
+   },
+   "modeStyle": {
+    "_comment": "反推用忠实还原，生成/润色/迭代用增强版。",
+    "reverse": "faithful",
+    "gen": "epic",
+    "refine": "epic",
+    "iterate": "epic"
+   }
+  }
+ },
+ "sharedBlocks": {
+  "_comment": "可被多个模型族共用的规则块。族里用 sharedBlocks: [\"块名\"] 引用。Anima 与 Krea2 同属 Qwen 系文本编码器，自然语言方法论高度共通，所以这部分只写一份。",
+  "nlVisualDiscipline": {
+   "label": "自然语言视觉规范（Qwen 系通用）",
+   "rules": [
+    "【确定性语言】最终提示词只写可直接观察或用户明确要求的内容。禁止 maybe / possibly / probably / appears to / seems to / suggesting 等不确定表达；无法可靠确认的细节直接省略",
+    "【信息优先级】用户当前文字要求 ＞ 用户此前仍然有效的要求 ＞ 图像中明确可见的信息 ＞ 系统合理补充的次要细节。文字与图像冲突时以文字为准；用户未提及的部分尽量保留原图特征",
+    "【禁止心理与叙事】不写人物心理、象征意义、剧情、国籍、职业、创作意图；抽象要求须转化为颜色、光线、构图、材质、动作、表情等具体视觉特征",
+    "【身份锚点】主要人物按稳定顺序描述：脸型 ＞ 五官 ＞ 肤色 ＞ 发型发色 ＞ 瞳色 ＞ 体型 ＞ 服装结构 ＞ 显著饰品。忠实版与增强版必须保留同一套身份锚点，防止增强时改变身份、年龄感或关键造型",
+    "【多主体防串味】多人或多主体画面必须分别写清数量、左右位置、前后关系、各自外貌/服装/动作/视线与互动，避免特征互相串联",
+    "【视觉层级】明确第一视觉焦点，复杂画面可设第二焦点，但不得让所有元素权重相同。通过主体位置、尺寸、清晰度、亮度或色彩差异引导视线；次要元素不得在对比度、清晰度或饱和度上压过主体。多人画面明确共同焦点或主次关系",
+    "【审美方向先判断】增强前先判断最适合当前内容的审美方向：人像重面部表现与轮廓/背景分离；时尚重服装轮廓与材质；产品重形体完整与表面响应；建筑重结构/尺度/透视；风景重空间纵深与色彩过渡；插画动画重线条/色块/轮廓/渲染。禁止机械套用固定的电影级模板",
+    "【光必须有来源】主光、辅助光、环境光、阴影方向、反射与轮廓光都必须有合理的空间来源。轮廓光、体积光、霓虹反射、月光、夕阳、窗光不得作为无来源的装饰叠加。说明主光的方向、软硬、色温与衰减，以及它如何塑造面部平面或物体体积",
+    "【阴影有设计】说明阴影边缘软硬、密度、颜色、长度与覆盖区域。可用窗格影、树叶斑驳光、百叶窗影、建筑投影等图案化光影，但必须符合场景来源并服务于构图",
+    "【材质分化】不同材质必须呈现不同受光：金属体现反射强度与边缘高光；玻璃体现透明/折射/厚度；皮肤体现自然纹理与柔和过渡；丝绸体现方向性高光与褶皱；棉布体现柔和漫反射；湿表面只在合理区域产生镜面反射。禁止皮肤/布料/金属/玻璃都呈现相同的塑料光泽",
+    "【色彩结构】组织主色、辅色与少量强调色，说明它们作用于哪些主体或区域，而不是只写配色理论名称。建立完整明度结构：明确最亮区域、主要中间调与最深暗部，使主体轮廓在缩小观看时仍清晰。不用单一色温覆盖整张画面",
+    "【构图与镜头自洽】不得同时加入互相矛盾的摄影要求（如 close-up 与 full-body、shallow depth of field 与 every object in sharp focus）。不得无故加入强烈镜头光晕、过曝、色差、噪点、运动模糊或鱼眼畸变",
+    "【增强版克制原则】不得无故添加飞舞粒子、烟雾、花瓣、火星、镜头光晕或体积光；不得对所有场景套用动态广角、浅景深与强烈轮廓光；不得把所有表面写成湿润、反光或发光；不得用 cinematic / dramatic / epic / stunning 等抽象词代替具体的构图、光线与材质设计。增强要增加视觉意图，而不是增加装饰数量",
+    "【绘画表现】对插画/动画/概念艺术，描述实际可见或目标所需的笔触、边缘、线条与色块组织，而不只是笼统写 detailed illustration。可用 hard edges / soft edges / lost-and-found edges 建立焦点：最清晰的边缘位于主体关键区域，次要区域与远景适当弱化",
+    "【图中文字与遮挡】用户要求出现文字时，准确保留内容、语言、位置、颜色与排版；无法辨认的文字不得虚构。用户未要求时不主动添加标题、字幕、水印、徽标或界面文字。存在像素化/马赛克/黑条/模糊时，说明遮挡方式、覆盖对象与位置"
+   ]
+  },
+  "concreteDiscipline": {
+   "label": "具体化与画面纪律（实测提炼）",
+   "rules": [
+    "【泛称必须具体化】泛称与弱形容词会被模型默认先验覆盖，必须换成具体值。对照：school uniform → white dress shirt, red ribbon, blue pleated skirt；casual clothes → white hoodie, denim shorts, sneakers；elegant outfit → black evening gown, lace trim, pearl necklace；armor → silver plate armor, pauldrons, leather belt；nice body → slim, medium breasts, fair skin；headband → brown headband with triangle pattern；sword → wide short sword, silver blade；leather boots → brown leather boots, ankle-length；pretty face → blunt bangs, thin eyebrows, eyelashes, large pupils。禁写 a beautiful girl with elegant clothes / cute anime girl 这类无法执行的概括",
+    "【外观维度逐项写具体值】发型发色（silver hair, very long hair, straight hair, blunt bangs）、眼色眼型（purple eyes, detailed eyes, round eyes, large pupils）、肤色（fair skin / pale skin / tan，不写会随机）、体型与胸围、服饰每件+颜色+款式（white dress shirt, red ribbon, blue pleated skirt）、袜子有无与长度显式（no socks / black knee-high socks / white thighhighs）、鞋靴长短样式、发饰与首饰锁款式+颜色+图案",
+    "【发型双锚】强先验分类词作主 tag（long hair）+ 体部位 NL 确认句（hair reaching her waist）并存。禁把主 tag 换成先验弱的细词——只写 waist-length hair 会被整批读成短发",
+    "【刘海必选型】刘海必须显式选型，禁留空：三轴定位（遮挡程度 露额→半遮→遮眼 × 线条 平直→斜向→曲线 × 对称 居中→偏侧→不对称）。blunt bangs 只是默认之一。有 blunt bangs 时删冗余的 straight hair",
+    "【服装状态转换双锚定】脱/卸类必须写「现在露出的部位显式」+「脱掉的件去向在场」：topless, bare chest + breastplate and pauldrons discarded on the ground。只写脱下件去向而漏写裸露时，模型会把衣服照旧画在身上（对着装先验强的角色尤其明显）。每页穿什么/露什么/脱掉的件去向显式写，禁靠语境暗示",
+    "【状态转换写结果态】只写当前帧可见的静态事实，禁跨时间因果与过程动词（being pulled off / spreading / leaving red marks）。掉落类写「原位已空 + 落点在场」：her hair bare now, no hairpin, the red hairpin fallen on the tatami",
+    "【道具按可见性写】道具只在画面能看到或该页承担功能时写，构图不可见时省略不画。判别：「去掉这个道具，剧情/动作还成立吗？」成立就省略。禁把道具从原位置挪到可见处以迁就机位",
+    "【道具材质形态写死】写材质+形态并排除替换体：white marble pillar / golden ceremonial rope with tassels + 负面 wooden pillar, hemp rope。深色贯穿道具每页逐字重复色名+材质（deep purple silk stole），并负面排除浅色漂移",
+    "【发光写光感不只写 glowing】光标签只锁定发光事实，光感靠 NL 光效句（a soft golden glow radiating from the cross hairpin, light spilling onto her hair）。发光态禁过程动词（flickering），用冷暖对比表达。熄灭不能只写否定状态词（gem gone dark 会被发光先验无视），改「暗态写实词 + 环境替代光源在场」：dark unlit sapphire on the staff + wall torches cast the only light",
+    "【视线逐页单选】每页视线恰好一个目标：朝镜头（looking at viewer） XOR 看人 XOR 看物，三者互斥。禁默认写 looking at viewer（非镜头页写了等于摆拍污染全页）；该指定的页禁留空（留空则模型自由发挥）。要朝镜头时写 looking at viewer / facing camera；要排除镜头时写 not at the camera 并把 looking at viewer 放进负面",
+    "【多角色逐个独立描述】每角色单独写完整外观+动作，用一个连续段落，不要在同一行混写两角色的标签，否则特征会串。同发色角色用长度/发型/配件显式区分——双女主/姐妹同框禁只差一种发色深浅，至少拉开发型轮廓/眼型/体型/服装剪影两维。负面加 cloned face, extra limbs",
+    "【主角与次要角色分级】主角写完整四件套（外观+服装+动作+表情）；非主体第三人只给 2-3 维可辨识特征 + 位置/朝向/动作钉死，禁写完整五件套（完整多特征块会被模型裂成多个身体）。无特别设定的男性角色统一最简配色 + faceless（1boy, faceless male, his face in shadow），细节越多越容易串给女主",
+    "【人群与非主体写可渲染动作】给每个可见路人一个具体动作（head down, looking at phone, eyes closed），禁写抽象疏离词（ignoring her, nobody looking at her 不可渲染）。场景类型靠视觉签名元素钉死而非地点名：street → crosswalk, traffic light, wet asphalt reflections",
+    "【前后遮挡关系写明确】角色处于前景物体之后时（笼子/栏杆/窗框/玻璃），模型会把前面的物体透明化。写法：①透过敞开的门/开口看（seen through the open cage door, bars behind her）；②把栏杆放角色后方（cage bars behind her, none across her body）；③前景物体只框边缘（cage frame at the edges framing her, open center）；④或负面加 transparent bars, missing cage bars, bars across her body",
+    "【时间光源写方向色温与受光物】禁裸时间词（morning light / moonlight 是弱信号，会被回落成默认光线）。写光源方向+色温对比+场景受光元素：warm golden morning light slanting through the stained glass windows, long soft shadows, light pooling on the stone floor，并负面排除时段错位（晨光页加 night, moonlight）"
+   ]
+  },
+  "animaAxioms": {
+   "label": "Anima 行为公理（一切写作纪律的根）",
+   "rules": [
+    "【公理 1 · 组装式模型】写了什么就有对应零件，但零件之间不有机融合——是摆放不是生长。推论：每帧只给 1 个主导动作 + 1 个主导表情 + 1 个空间关系（Tier 0 单帧可读性，超过就拆页或砍动作）；抽象状态一律用具象物理状态替代；环境与情绪用自然语言承载（NL 是组装件的粘合剂）",
+    "【公理 2 · 强先验吞弱信号】泛称、弱形容词、程度副词、状态词都会被默认先验覆盖（long hair→中分短发、broken→完整态、street→模糊背景）。推论：每个外观维度写具体值；状态转换写结构句，禁过程动词与程度副词（淡淡/微微/渐现）；范围即强度——要淡给小范围、要满给大范围，禁写浓度；「不要 X」必须显式编码，不能只靠口头说",
+    "【公理 3 · 字面化一切】比喻与文学词会被渲染成最常见的具象物件（frozen→冰块、puppet→提线木偶加丝线、pig→真猪鼻）。推论：角色关键特征一律用 Danbooru 标签；明喻只放情绪收尾层，不放标签层；负面主动压字面化产物（puppet strings, marionette strings, trophy）",
+    "【结构选择】模板 A（标签流）适合角色立绘/肖像/快速测试：year → 人数 → 角色 → 作品 → 外观 → 姿态 → 场景 → NL 补充；模板 B（换行分段）适合动态构图/NSFW/多角色，每段一个语义层，且场景段不可省（不写场景会默认纯白背景）；模板 C（分号分层叙事）适合成品级/自动化，用分号串联画面层次，末段必为情绪收尾（evoking an atmosphere of X）。默认用 C，简短测试用 A，NSFW 有 H 行为用 B",
+    "【模板 C 要点】角色四件套（外观+服装每件+动作+表情）单角色 50-80 词；否定式定调（rather than / avoids / not）排除歧义；反摆拍美学（characters focused on their own actions rather than looking at the camera, unposed, candid）；具体优于笼统（limited to 6 hues: electric cyan, burnt orange 优于 vibrant colors）；情绪收尾放最后 1-2 个分号片段",
+    "【分段用真换行】BREAK 有被模型当作画面文字烘焙到纸/卷轴上的风险，优先用真实换行分段。确需 BREAK 时，负面必须加 text, english text, letters, words，且 BREAK 附近避免放文字载体道具",
+    "【权重敏感度】Anima 对低权重不敏感，(tag:1.5) 或更高才有效，(tag:0.8) 几乎无效；多层括号约等于强加强；负权重可压制。权重比 SDXL 需要更高的数值",
+    "【负面是意图预测不是固定清单】先选档位基线，再扫正面按可能引发的问题追加，每项解决一个具体问题。必做两件事：①反向保护——正面关键动作/姿态给反向词防误读；②删误杀项——通用模板里压制正面在场元素的项要删（场景有散落衣物就删 clothing/bra/panties，正面有镜子就删 mirror）。原则：负面压的是「画面不应出现的东西」，不是「画面正在要求的东西」",
+    "【问题预测追加表】手可见/握物→bad hands, missing fingers, extra digits, fused fingers；严重手部（持武器）→(bad hands:1.6), (extra digits:1.4), (6 fingers:1.5)；多角色→extra limbs, cloned face；持武器→duplicate weapon, duplicated sword；面部特写→deformed face, deformed eyes, bad pupils；全身→bad proportions, long neck, missing limbs；兽耳角色→furry, feral, semi-anthro, anthropomorphic；动态构图→multiple views, comic；职业制服→headscarf, wimple, veil, hood（不需时）；明喻→puppet strings, marionette strings；要彩色→monochrome, greyscale, sepia",
+    "【画师标签禁用】本工作台一律不输出画师标签（@ 前缀、artist: 前缀、画师名），即使用户提到画师风格，也改为用具体的视觉特征描述（线条、色块、笔刷、配色、光影）来表达"
+   ]
+  }
+ },
+ "wording": {
+  "_comment": "输出用词规范。避免直白解剖学词导致上游安全审查拦截；改用体系标准标签与氛围化写法。tags 里的词在任何安全等级下都不出现。删掉某条即不再替换。",
+  "banned": [
+   "penis",
+   "pussy",
+   "vagina",
+   "dick",
+   "cock",
+   "cunt",
+   "clit",
+   "cum"
+  ],
+  "replacements": {
+   "penis": "erection",
+   "dick": "erection",
+   "cock": "erection",
+   "pussy": "spread legs",
+   "vagina": "visible slit",
+   "cunt": "visible slit",
+   "clit": "exposed slit",
+   "cum": "white fluid"
+  },
+  "guidance": [
+   "男性器官 → erection / visible bulge / tented shorts / bulge",
+   "女性器官 → spread legs / exposed slit / pink inside / wet slit / visible slit",
+   "精液与体液 → white fluid / sticky liquid / dripping liquid / wet / slick / lubricant",
+   "插入动作 → penetration / inserted / stuffed / filled",
+   "裸露 → no clothes / bare body / fully exposed / naked（naked 属安全可用，不必过度规避）",
+   "自然语言中同样不得直呼器官：转为对光线、湿润感、肤色变化的氛围描写，重点放在体态反应、肌肉紧绷、呼吸起伏、体液光泽、衣物凌乱感"
+  ]
+ }
+}

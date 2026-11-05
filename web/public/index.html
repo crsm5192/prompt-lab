@@ -1,0 +1,1153 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>提示词工作台 · NAS</title>
+<style>
+  :root {
+    --bg: #12131a;
+    --layer: #1a1c26;
+    --layer2: #22252f;
+    --border: #2e3240;
+    --text: #e6e8ef;
+    --dim: #9aa0b0;
+    --accent: #6b8afd;
+    --ok: #4ec9a0;
+    --warn: #e8a33d;
+    --err: #e05c6b;
+    --mono: ui-monospace, Consolas, "SF Mono", monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.55 -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 18px 16px 60px; }
+  header { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+  h1 { font-size: 17px; margin: 0; font-weight: 600; }
+  .sub { color: var(--dim); font-size: 12px; }
+  .tabs { display: flex; gap: 6px; margin: 12px 0; flex-wrap: wrap; }
+  .tab {
+    padding: 6px 14px; border-radius: 8px; border: 1px solid var(--border);
+    background: transparent; color: var(--dim); cursor: pointer; font: inherit; font-size: 13px;
+  }
+  .tab.on { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  .cols { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 14px; }
+  @media (max-width: 900px) { .cols { grid-template-columns: 1fr; } }
+  .card {
+    background: var(--layer); border: 1px solid var(--border);
+    border-radius: 12px; padding: 14px 16px; margin-bottom: 14px;
+  }
+  .card h3 { margin: 0 0 10px; font-size: 13px; font-weight: 600; }
+  label { display: block; font-size: 12px; color: var(--dim); margin: 10px 0 5px; }
+  textarea, input, select {
+    width: 100%; padding: 8px 10px; border-radius: 8px; font: inherit;
+    background: var(--bg); color: var(--text); border: 1px solid var(--border);
+  }
+  textarea { resize: vertical; min-height: 68px; }
+  textarea.mono, .mono { font-family: var(--mono); font-size: 12.5px; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
+  button.btn {
+    padding: 7px 14px; border-radius: 8px; cursor: pointer; font: inherit; font-size: 13px;
+    background: var(--layer2); color: var(--text); border: 1px solid var(--border);
+  }
+  button.btn:hover { border-color: var(--accent); }
+  button.btn:disabled { opacity: .5; cursor: not-allowed; }
+  button.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  .fams { display: grid; gap: 6px; grid-template-columns: repeat(auto-fit, minmax(130px,1fr)); }
+  .fam {
+    padding: 9px 12px; border-radius: 8px; cursor: pointer; text-align: left; font: inherit;
+    background: transparent; color: var(--dim); border: 1px solid var(--border);
+  }
+  .fam.on { border-color: var(--accent); color: var(--text); background: rgba(107,138,253,.12); font-weight: 600; }
+  .fam small { display: block; font-size: 10.5px; opacity: .75; font-weight: 400; margin-top: 2px; }
+  .hint { font-size: 11.5px; color: var(--dim); line-height: 1.5; }
+  .note { font-size: 12px; border-left: 3px solid var(--border); padding: 6px 10px; background: var(--layer2); border-radius: 0 6px 6px 0; margin-top: 10px; }
+  .note.ok { border-color: var(--ok); }
+  .note.warn { border-color: var(--warn); }
+  .note.err { border-color: var(--err); }
+  .badge { font-size: 10.5px; padding: 1px 7px; border-radius: 99px; border: 1px solid var(--border); color: var(--dim); }
+  /* 相机雷达 */
+  .cam { display: flex; gap: 12px; align-items: stretch; }
+  .cam-radar { position: relative; flex: 0 0 190px; width: 190px; height: 190px; }
+  .cam-radar canvas { width: 100%; height: 100%; display: block; border-radius: 10px; cursor: crosshair; touch-action: none; }
+  .cam-side { flex: 1; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+  .cam-group-title { font-size: 11px; color: var(--dim); margin-bottom: 4px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 4px; }
+  .chip {
+    padding: 2px 7px; border-radius: 6px; cursor: pointer; font: inherit; font-size: 11px;
+    background: transparent; color: var(--dim); border: 1px solid var(--border);
+  }
+  .chip.on { border-color: var(--accent); color: var(--text); background: rgba(107,138,253,.16); font-weight: 600; }
+  .cam-read { font-family: var(--mono); font-size: 11.5px; color: var(--dim); }
+  .cam-read b { color: var(--text); }
+  .cam-out {
+    font-family: var(--mono); font-size: 12px; padding: 7px 9px; border-radius: 7px;
+    background: var(--bg); border: 1px solid var(--border); word-break: break-word; min-height: 32px;
+  }
+  .drop {
+    border: 1px dashed var(--border); border-radius: 10px; padding: 18px; text-align: center;
+    color: var(--dim); font-size: 12.5px; cursor: pointer;
+  }
+  .drop.on { border-color: var(--accent); background: rgba(107,138,253,.08); }
+  .drop img { max-width: 100%; max-height: 190px; border-radius: 8px; margin-top: 8px; }
+  .kv { display: flex; gap: 12px; flex-wrap: wrap; font-size: 11.5px; color: var(--dim); margin-top: 8px; }
+  .kv b { color: var(--text); font-family: var(--mono); }
+  .len { font-size: 11.5px; margin-top: 6px; }
+  .len.ok { color: var(--ok); }
+  .len.warn { color: var(--warn); }
+  .len.over { color: var(--err); }
+  ul.notes { margin: 6px 0 0; padding-left: 18px; font-size: 12px; color: var(--dim); }
+  ul.notes li { margin: 2px 0; }
+  .spin { display: inline-block; width: 12px; height: 12px; border: 2px solid var(--dim); border-top-color: var(--accent); border-radius: 50%; animation: sp .7s linear infinite; vertical-align: -2px; }
+  @keyframes sp { to { transform: rotate(360deg); } }
+  .hidden { display: none !important; }
+  /* 标签 / 角色 */
+  .taglist { display: flex; flex-direction: column; gap: 3px; margin-top: 10px; max-height: 260px; overflow: auto; }
+  .tagrow {
+    display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 6px;
+    cursor: pointer; background: transparent; border: 1px solid transparent; font: inherit; text-align: left; width: 100%;
+  }
+  .tagrow:hover { background: var(--layer2); border-color: var(--border); }
+  .tagrow .tn { font-family: var(--mono); font-size: 12.5px; flex: 1; }
+  .tagrow .tc { font-size: 10.5px; color: var(--dim); }
+  .cat-general { color: var(--dim); }
+  .cat-character { color: #7fd4a0; }
+  .cat-copyright { color: #e8c07d; }
+  .cat-artist { color: #d48fb0; }
+  .cat-meta { color: #8fa8d4; }
+  .wiki { font-size: 12.5px; line-height: 1.6; color: var(--text); max-height: 320px; overflow: auto; white-space: pre-wrap; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 8px; margin-top: 8px; }
+  .grid figure { margin: 0; position: relative; border-radius: 8px; overflow: hidden; border: 1px solid var(--border); background: var(--bg); }
+  .grid img { width: 100%; height: 110px; object-fit: cover; display: block; cursor: pointer; }
+  .grid figcaption { position: absolute; right: 4px; bottom: 4px; font-size: 10px; background: rgba(0,0,0,.6); color: #fff; padding: 1px 5px; border-radius: 4px; }
+  .charres { margin-top: 10px; }
+  .charres h4 { font-size: 12px; margin: 12px 0 6px; color: var(--dim); font-weight: 600; }
+  .refcard {
+    font-size: 12px; padding: 8px 10px; border-radius: 8px; background: var(--bg);
+    border: 1px solid var(--border); margin-bottom: 6px;
+  }
+  .refcard .ruri { font-family: var(--mono); font-size: 10.5px; color: var(--dim); word-break: break-all; }
+  .refcard .rabstract { margin-top: 4px; color: var(--text); opacity: .85; }
+  .refcard .rscore { font-size: 10px; color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>提示词工作台</h1>
+    <span class="sub">NAS 版 · NSFW 反推走本地 WD14</span>
+    <span id="status" class="badge">就绪</span>
+  </header>
+
+  <div class="tabs" id="tabs">
+    <button class="tab on" data-tab="gen">① 生成</button>
+    <button class="tab" data-tab="reverse">③ 反推</button>
+    <button class="tab" data-tab="refine">② 润色</button>
+    <button class="tab" data-tab="iterate">④ 迭代</button>
+    <button class="tab" data-tab="tags">⑤ 标签</button>
+    <button class="tab" data-tab="chars">⑥ 角色</button>
+    <button class="tab" data-tab="rules">⚙ 规则</button>
+  </div>
+
+  <div class="cols">
+    <div>
+      <div class="card">
+        <h3>目标模型族</h3>
+        <div class="fams" id="fams"></div>
+      </div>
+
+      <div class="card">
+        <h3>🎥 相机角度</h3>
+        <div class="hint" style="margin-bottom:8px">拖雷达图选机位（半径=景别），或点右侧档位。角度描述按 Multiple-Angles LoRA 标准写法生成。</div>
+        <div class="cam">
+          <div class="cam-radar"><canvas id="radar" title="拖动选择方位与景别"></canvas></div>
+          <div class="cam-side" id="camSide"></div>
+        </div>
+        <div class="cam-read" id="camRead" style="margin-top:8px"></div>
+        <div class="cam-out" id="camOut">…</div>
+        <div class="row">
+          <button class="btn" id="camCopy">复制</button>
+          <button class="btn" id="camInsert">插入到输入</button>
+          <button class="btn" id="camStyle">写法：LoRA 标准</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>高级</h3>
+        <label>文本模型</label>
+        <select id="model"></select>
+        <label>额外要求（会并入系统提示）</label>
+        <input id="hardNote" placeholder="例：不要出现任何建筑">
+        <div class="row">
+          <button class="btn" id="probe">检测服务</button>
+        </div>
+        <div id="probeOut"></div>
+      </div>
+    </div>
+
+    <div>
+      <div class="card">
+        <h3>结果</h3>
+        <label>正向提示词</label>
+        <textarea id="outPos" class="mono" readonly style="min-height:120px"></textarea>
+        <div class="len" id="outLen"></div>
+        <div class="row">
+          <button class="btn" id="copyPos">复制正向</button>
+          <button class="btn" id="toRefine">拿去润色</button>
+          <button class="btn" id="toIterate">拿去迭代</button>
+        </div>
+        <label>负面提示词</label>
+        <textarea id="outNeg" class="mono" readonly style="min-height:60px"></textarea>
+        <div class="row"><button class="btn" id="copyNeg">复制负面</button></div>
+        <div class="kv" id="outKv"></div>
+        <ul class="notes" id="outNotes"></ul>
+      </div>
+
+      <!-- ── 输入区（六个 Tab）────────────────────────────────────── -->
+      <div class="card" id="card-gen">
+        <h3>① 生成</h3>
+        <label>需求描述</label>
+        <textarea id="brief" placeholder="例：雨夜霓虹街头，少女撑伞回头，电影感"></textarea>
+        <label>基底词 / 触发词（可选）</label>
+        <input id="base" placeholder="例：my_oc, blue dress">
+        <div class="row">
+          <button class="btn primary" id="runGen">生成提示词</button>
+        </div>
+      </div>
+
+      <div class="card hidden" id="card-reverse">
+        <h3>③ 反推</h3>
+        <div class="hint" style="margin-bottom:8px">
+          先用 API 多模态模型看图（懂构图/姿势/画风），<b>拒答或失败才降级 WD14</b>。
+        </div>
+        <label>图片</label>
+        <div class="drop" id="drop">
+          点击选择 / 拖入 / 粘贴图片
+          <input type="file" id="file" accept="image/*" class="hidden">
+          <div id="preview"></div>
+        </div>
+        <label>或者（NAS 上的路径）</label>
+        <input id="imgPath" placeholder="/images/xxx.jpg 或留空用上面的图">
+        <label>反推引擎</label>
+        <select id="engine">
+          <option value="auto">自动（VLM 优先，拒答降级 WD14）</option>
+          <option value="vlm">强制 VLM（不降级，失败即报错）</option>
+          <option value="wd14">强制 WD14（跳过 VLM）</option>
+        </select>
+        <div class="row">
+          <button class="btn primary" id="runReverse">反推</button>
+          <label style="margin:0;display:flex;gap:6px;align-items:center;font-size:12px">
+            <input type="checkbox" id="organize" checked style="width:auto"> 用 LLM 整理成目标族
+          </label>
+        </div>
+        <div id="revEngine" class="hint"></div>
+      </div>
+
+      <div class="card hidden" id="card-refine">
+        <h3>② 润色</h3>
+        <label>待润色的原始提示词</label>
+        <textarea id="source" class="mono" placeholder="粘贴已有提示词"></textarea>
+        <label>必须保留的基底词 / 触发词（可选）</label>
+        <input id="refBase" placeholder="LoRA 触发词等">
+        <div class="row"><button class="btn primary" id="runRefine">润色</button></div>
+      </div>
+
+      <div class="card hidden" id="card-iterate">
+        <h3>④ 迭代</h3>
+        <label>当前提示词（正向）</label>
+        <textarea id="iterPos" class="mono"></textarea>
+        <label>当前提示词（负面）</label>
+        <textarea id="iterNeg" class="mono" style="min-height:56px"></textarea>
+        <label>本轮修改要求</label>
+        <textarea id="feedback" placeholder="例：把光线改成逆光，加一点雾气"></textarea>
+        <div class="row"><button class="btn primary" id="runIterate">迭代</button></div>
+      </div>
+
+      <!-- ⑤ 标签详情 -->
+      <div class="card hidden" id="card-tags">
+        <h3>⑤ 标签详情</h3>
+        <div class="hint" style="margin-bottom:8px">查 Danbooru：搜索 / wiki 释义 / 相关标签 / 示例图</div>
+        <div class="row" style="margin-top:0">
+          <input id="tagQ" placeholder="标签名，例：long_hair" style="flex:1">
+          <button class="btn primary" id="runTagSearch">搜索</button>
+        </div>
+        <div id="tagResults"></div>
+
+        <div id="tagDetail" class="hidden">
+          <div class="row" style="margin-top:14px">
+            <b id="tagName" class="mono" style="font-size:14px"></b>
+            <span class="badge" id="tagCat"></span>
+            <span class="badge" id="tagCount"></span>
+          </div>
+          <div class="row">
+            <button class="btn" id="tagCopy">复制标签名</button>
+            <button class="btn" id="tagCopyComma">复制「tag, 」</button>
+            <button class="btn" id="tagInsert">插入到生成</button>
+          </div>
+          <div class="tabs" style="margin:10px 0 6px">
+            <button class="tab on" data-tagtab="wiki">释义</button>
+            <button class="tab" data-tagtab="related">相关</button>
+            <button class="tab" data-tagtab="posts">示例图</button>
+          </div>
+          <div id="tagPane"></div>
+        </div>
+      </div>
+
+      <!-- ⑥ 角色库 -->
+      <div class="card hidden" id="card-chars">
+        <h3>⑥ 角色库</h3>
+        <div class="hint" style="margin-bottom:8px">
+          Danbooru 核验写法（自动纠正「姓前名后」语序）+ OpenViking 语义检索参考
+        </div>
+        <div class="row" style="margin-top:0">
+          <input id="charQ" placeholder="角色名，例：hatsune miku / subaru awa" style="flex:1">
+          <button class="btn primary" id="runChar">检索</button>
+        </div>
+        <div id="charResults"></div>
+      </div>
+
+      <!-- ⚙ 规则 / 预设 -->
+      <div class="card hidden" id="card-rules">
+        <h3>⚙ 提示词规则与预设</h3>
+        <div class="hint" style="margin-bottom:8px">
+          改完点保存即写回 rules.json，下次请求生效。也可直接用编辑器改这个文件。
+        </div>
+
+        <!-- 预设总览（风格档 + 族参数） -->
+        <div id="presetView"></div>
+
+        <div class="tabs" style="margin:12px 0 6px">
+          <button class="tab on" data-ruletab="presets">预设总览</button>
+          <button class="tab" data-ruletab="edit">编辑 JSON</button>
+        </div>
+
+        <div id="rulePane-presets">
+          <div class="hint">上方是各族的风格档与推荐参数，只读展示。</div>
+        </div>
+
+        <div id="rulePane-edit" class="hidden">
+          <label>规则原文（JSON）</label>
+          <textarea id="rulesJson" class="mono" style="min-height:340px"></textarea>
+          <div class="row">
+            <button class="btn primary" id="saveRules">保存规则</button>
+            <button class="btn" id="reloadRules">重新载入</button>
+            <button class="btn" id="copyRules">复制全文</button>
+          </div>
+          <div id="rulesMsg"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const ROUTE = '/api';
+
+const state = {
+  tab: 'gen',
+  family: 'anima',
+  families: [],
+  cam: { azimuth: 0, elevation: 0, distance: 'medium shot', extras: {} },
+  camStyle: 'standard',
+  camCfg: null,
+  imageB64: null,
+  imageName: '',
+  result: null,
+};
+
+
+async function api(path, opts) {
+  const res = await fetch(ROUTE + path, opts);
+  const j = await res.json().catch(() => ({}));
+  if (!j.ok) throw new Error(j.error || ('HTTP ' + res.status));
+  return j;
+}
+const post = (path, body) => api(path, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify(body || {}),
+});
+
+function setStatus(text, kind) {
+  const el = $('status');
+  el.textContent = text;
+  el.style.color = kind === 'err' ? 'var(--err)' : kind === 'ok' ? 'var(--ok)' : 'var(--dim)';
+}
+function busy(b) {
+  document.querySelectorAll('button.btn.primary').forEach((x) => { x.disabled = b; });
+  setStatus(b ? '处理中…' : '就绪', b ? '' : 'ok');
+}
+/**
+ * 复制到剪贴板。
+ *
+ * ⚠️ 关键：navigator.clipboard 只在【安全上下文】可用——HTTPS 或 localhost。
+ * 通过 http://<局域网IP>:33002 这类非安全上下文访问时它是 undefined，
+ * 所以必须有降级方案，否则点「复制」会静默失败。
+ */
+function copy(text) {
+  const s = text == null ? '' : String(text);
+  if (!s.trim()) { setStatus('没有可复制的内容', 'err'); return; }
+
+  const ok = () => setStatus('已复制（' + s.length + ' 字符）', 'ok');
+  const fail = () => setStatus('复制失败，请手动选中复制', 'err');
+
+  // 1. 现代 API（需 HTTPS 或 localhost）
+  if (navigator.clipboard && navigator.clipboard.writeText && window.isSecureContext) {
+    navigator.clipboard.writeText(s).then(ok, () => (legacyCopy(s) ? ok() : fail()));
+    return;
+  }
+  // 2. 老办法：execCommand + 临时 textarea，HTTP 下仍可用
+  if (legacyCopy(s)) { ok(); return; }
+  fail();
+}
+
+function legacyCopy(s) {
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = s;
+    // 放视口外但仍在文档里（display:none 会让 select 失效）
+    ta.setAttribute('readonly', '');
+    ta.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0;pointer-events:none';
+    document.body.appendChild(ta);
+    ta.select();
+    ta.setSelectionRange(0, s.length);
+    const done = document.execCommand('copy');
+    document.body.removeChild(ta);
+    return done;
+  } catch { return false; }
+}
+
+// ── 族 ─────────────────────────────────────────────────────────────────────
+function renderFams() {
+  const box = $('fams');
+  box.innerHTML = '';
+  state.families.forEach((f) => {
+    const b = document.createElement('button');
+    b.className = 'fam' + (state.family === f.id ? ' on' : '');
+    b.innerHTML = f.label + '<small>' + (f.kind || '') + '</small>';
+    b.onclick = () => { state.family = f.id; renderFams(); };
+    box.appendChild(b);
+  });
+}
+
+// ── 页签 ───────────────────────────────────────────────────────────────────
+function setTab(tab) {
+  state.tab = tab;
+  document.querySelectorAll('.tab').forEach((t) => {
+    t.classList.toggle('on', t.dataset.tab === tab);
+  });
+  for (const t of ['gen', 'reverse', 'refine', 'iterate', 'tags', 'chars', 'rules']) {
+    $('card-' + t).classList.toggle('hidden', t !== tab);
+  }
+  // 规则页首次进入时加载
+  if (tab === 'rules' && !rulesData) loadRules();
+}
+document.querySelectorAll('.tab').forEach((t) => {
+  if (t.dataset.tab) t.onclick = () => setTab(t.dataset.tab);
+});
+
+// ── 相机雷达（几何与 VNCCS 一致）────────────────────────────────────────────
+const AZ = [0, 45, 90, 135, 180, 225, 270, 315];
+const EL = [-30, 0, 30, 60];
+const DIST = ['close-up', 'medium shot', 'wide shot'];
+const RING = {
+  'close-up': 'close-up', 'extreme close-up': 'close-up', 'medium close-up': 'close-up', 'macro shot': 'close-up',
+  'medium shot': 'medium shot', 'cowboy shot': 'medium shot', 'medium long shot': 'medium shot',
+  'wide shot': 'wide shot', 'full body': 'wide shot', 'extreme long shot': 'wide shot', 'establishing shot': 'wide shot',
+};
+const ring = (d) => RING[d] || 'medium shot';
+
+function geo(w) {
+  const size = w, pad = Math.min(22, Math.max(10, size * 0.075));
+  const outer = Math.max(1, size / 2 - pad);
+  return { size, cx: w / 2, cy: w / 2, outer,
+    radii: { 'close-up': outer * 0.36, 'medium shot': outer * 0.66, 'wide shot': outer } };
+}
+
+function drawRadar() {
+  const cv = $('radar');
+  const box = cv.parentElement;
+  const w = box.clientWidth || 190;
+  const dpr = window.devicePixelRatio || 1;
+  cv.width = Math.round(w * dpr); cv.height = Math.round(w * dpr);
+  cv.style.width = w + 'px'; cv.style.height = w + 'px';
+  const g = geo(w);
+  const ctx = cv.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, w);
+
+  const bg = ctx.createRadialGradient(g.cx, g.cy, 0, g.cx, g.cy, g.outer * 1.2);
+  bg.addColorStop(0, 'rgba(30,24,40,.54)');
+  bg.addColorStop(1, 'rgba(8,8,13,.96)');
+  ctx.fillStyle = bg; ctx.fillRect(0, 0, w, w);
+
+  ctx.save(); ctx.translate(g.cx, g.cy);
+  ctx.strokeStyle = 'rgba(255,255,255,.105)'; ctx.lineWidth = 1;
+  for (const d of DIST) { ctx.beginPath(); ctx.arc(0, 0, g.radii[d], 0, Math.PI * 2); ctx.stroke(); }
+  ctx.beginPath();
+  for (let a = 0; a < 360; a += 45) {
+    const r = a * Math.PI / 180;
+    ctx.moveTo(0, 0); ctx.lineTo(Math.cos(r) * g.outer, Math.sin(r) * g.outer);
+  }
+  ctx.strokeStyle = 'rgba(255,255,255,.075)'; ctx.stroke();
+
+  ctx.fillStyle = 'rgba(232,232,240,.28)';
+  ctx.font = '800 ' + Math.max(7, g.size * 0.034) + 'px sans-serif';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('FRONT', 0, g.outer * 0.72);
+  ctx.strokeStyle = 'rgba(232,232,240,.24)'; ctx.lineWidth = Math.max(1.5, g.size * 0.008);
+  ctx.beginPath();
+  ctx.moveTo(0, g.outer * 0.93); ctx.lineTo(0, g.outer * 0.79);
+  ctx.moveTo(0, g.outer * 0.79); ctx.lineTo(-g.size * 0.018, g.outer * 0.83);
+  ctx.moveTo(0, g.outer * 0.79); ctx.lineTo(g.size * 0.018, g.outer * 0.83);
+  ctx.stroke();
+
+  const subj = Math.max(7, g.size * 0.034);
+  ctx.fillStyle = '#b8a9e8';
+  ctx.shadowColor = 'rgba(184,169,232,.48)'; ctx.shadowBlur = g.size * 0.035;
+  ctx.fillRect(-subj / 2, -subj / 2, subj, subj);
+  ctx.shadowBlur = 0;
+
+  const radius = g.radii[ring(state.cam.distance)];
+  const ang = (Math.PI / 2) - (state.cam.azimuth * Math.PI / 180);
+  ctx.translate(radius * Math.cos(ang), radius * Math.sin(ang));
+  ctx.rotate(ang + Math.PI / 2);
+  const tri = Math.max(7, g.size * 0.034);
+  ctx.fillStyle = '#ff8fa3'; ctx.strokeStyle = '#2a1420';
+  ctx.lineWidth = Math.max(1, g.size * 0.006);
+  ctx.shadowColor = 'rgba(255,143,163,.58)'; ctx.shadowBlur = g.size * 0.045;
+  ctx.beginPath();
+  ctx.moveTo(0, tri); ctx.lineTo(-tri * 0.72, -tri * 0.7); ctx.lineTo(tri * 0.72, -tri * 0.7);
+  ctx.closePath(); ctx.fill(); ctx.shadowBlur = 0; ctx.stroke();
+  ctx.restore();
+}
+
+function pointToCam(ev) {
+  const cv = $('radar');
+  const rect = cv.getBoundingClientRect();
+  const g = geo(rect.width);
+  const dx = (ev.clientX - rect.left) - g.cx;
+  const dy = (ev.clientY - rect.top) - g.cy;
+  let deg = (Math.PI / 2 - Math.atan2(dy, dx)) * (180 / Math.PI);
+  deg = ((deg % 360) + 360) % 360;
+  const azimuth = AZ[Math.round(deg / 45) % AZ.length];
+  const r = Math.hypot(dx, dy);
+  const distance = DIST.reduce((best, c) =>
+    (Math.abs(g.radii[c] - r) < Math.abs(g.radii[best] - r) ? c : best));
+  return { azimuth, distance };
+}
+
+let dragging = false;
+const radar = $('radar');
+radar.addEventListener('pointerdown', (e) => {
+  e.preventDefault(); dragging = true;
+  Object.assign(state.cam, pointToCam(e));
+  try { radar.setPointerCapture(e.pointerId); } catch (_) {}
+  refreshCam();
+});
+radar.addEventListener('pointermove', (e) => {
+  if (!dragging) return;
+  Object.assign(state.cam, pointToCam(e));
+  refreshCam();
+});
+radar.addEventListener('pointerup', (e) => {
+  dragging = false;
+  try { radar.releasePointerCapture(e.pointerId); } catch (_) {}
+});
+
+// ── 相机档位 ───────────────────────────────────────────────────────────────
+function renderCamSide() {
+  const cfg = state.camCfg || {};
+  const side = $('camSide');
+  side.innerHTML = '';
+
+  const mk = (title, entries, isOn, onClick) => {
+    const box = document.createElement('div');
+    const t = document.createElement('div');
+    t.className = 'cam-group-title'; t.textContent = title;
+    box.appendChild(t);
+    const chips = document.createElement('div');
+    chips.className = 'chips';
+    entries.forEach(([key, label, extra]) => {
+      const b = document.createElement('button');
+      b.className = 'chip' + (isOn(key) ? ' on' : '');
+      b.textContent = label + (extra || '');
+      b.onclick = () => { onClick(key); refreshCam(); };
+      chips.appendChild(b);
+    });
+    box.appendChild(chips);
+    side.appendChild(box);
+  };
+
+  // 仰俯
+  mk('仰俯（垂直）', [...EL].reverse().map((e) => {
+    const entry = (cfg.仰俯 || {})[String(e)];
+    return [e, entry ? entry.label : e + '°', ''];
+  }), (k) => state.cam.elevation === k,
+  (k) => { state.cam.elevation = Number(k); });
+
+  // 景别（11 档）
+  const distEntries = Object.entries(cfg.景别 || {}).filter(([k]) => k !== '_comment')
+    .map(([k, v]) => [k, (v.native ? '●' : '○') + (v.hot ? '★' : '') + (v.label || k), '']);
+  mk('景别', distEntries, (k) => state.cam.distance === k,
+    (k) => { state.cam.distance = k; });
+
+  // 方位
+  mk('方位（水平）', AZ.map((a) => {
+    const entry = (cfg.方位 || {})[String(a)];
+    return [a, entry ? entry.label : a + '°', ''];
+  }), (k) => state.cam.azimuth === k,
+  (k) => { state.cam.azimuth = Number(k); });
+
+  // 补充词组
+  for (const g of ((cfg.补充 && cfg.补充.groups) || [])) {
+    const items = (g.items || []).slice()
+      .sort((a, b) => (b.hot ? 1 : 0) - (a.hot ? 1 : 0));
+    mk(g.label + (g.multi ? '（多选）' : '（单选）'),
+      items.map((it) => [it.tag, (it.hot ? '★' : '') + (it.label || it.tag),
+        it.elevationConflict ? ' ⚠' : '']),
+      (k) => (state.cam.extras[g.id] || []).includes(k),
+      (k) => {
+        const cur = state.cam.extras[g.id] || [];
+        const on = cur.includes(k);
+        if (on) state.cam.extras[g.id] = cur.filter((x) => x !== k);
+        else if (g.multi) state.cam.extras[g.id] = cur.concat([k]);
+        else state.cam.extras[g.id] = [k];
+      });
+  }
+}
+
+async function refreshCam() {
+  drawRadar();
+  $('camRead').innerHTML =
+    '<b>AZ</b> ' + state.cam.azimuth + '° &nbsp; ' +
+    '<b>EL</b> ' + state.cam.elevation + '° &nbsp; ' +
+    '<b>DIST</b> ' + state.cam.distance;
+  try {
+    const r = await post('/camera', { ...state.cam, style: state.camStyle });
+    state.camCfg = state.camCfg || r.config;
+    $('camOut').textContent = r.text || '';
+    if (r.conflicts && r.conflicts.length) {
+      $('camOut').textContent += '\n⚠ ' + r.conflicts.join('；');
+    }
+    renderCamSide();
+  } catch (e) { $('camOut').textContent = '角度服务不可用：' + e.message; }
+}
+
+// ── 图片 ───────────────────────────────────────────────────────────────────
+function readFile(file) {
+  if (!file || !file.type.startsWith('image/')) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    state.imageB64 = String(reader.result).split(',')[1];
+    state.imageName = file.name;
+    $('preview').innerHTML = '<img src="' + reader.result + '">';
+    $('drop').classList.remove('on');
+  };
+  reader.readAsDataURL(file);
+}
+$('drop').onclick = () => $('file').click();
+$('file').onchange = (e) => readFile(e.target.files[0]);
+$('drop').addEventListener('dragover', (e) => { e.preventDefault(); $('drop').classList.add('on'); });
+$('drop').addEventListener('dragleave', () => $('drop').classList.remove('on'));
+$('drop').addEventListener('drop', (e) => {
+  e.preventDefault(); $('drop').classList.remove('on');
+  const f = e.dataTransfer.files[0]; readFile(f);
+});
+document.addEventListener('paste', (e) => {
+  for (const it of (e.clipboardData || {}).items || []) {
+    if (it.type.startsWith('image/')) { readFile(it.getAsFile()); break; }
+  }
+});
+
+// ── 结果渲染 ───────────────────────────────────────────────────────────────
+function renderEngineInfo(r) {
+  const box = $('revEngine');
+  if (!r || !r.engine) { box.innerHTML = ''; return; }
+  if (r.engine === 'vlm') {
+    box.innerHTML = '<span class="note ok" style="display:inline-block;margin-top:6px">'
+      + '✓ VLM 反推（' + escapeHtml(r.vlmModel || '') + '，' + (r.vlmMs || 0) + 'ms）</span>';
+  } else {
+    box.innerHTML = '<span class="note warn" style="display:inline-block;margin-top:6px">'
+      + 'WD14 降级（' + (r.wd14Ms || 0) + 'ms，' + (r.wd14Count || 0) + ' 标签'
+      + (r.rating ? '，安全档 ' + escapeHtml(r.rating) : '') + '）</span>';
+  }
+}
+
+function renderResult(r) {
+  state.result = r;
+  $('outPos').value = r.positive || '';
+  $('outNeg').value = r.negative || '';
+
+  // 字数只做信息展示，不限、不告警（用户要求去掉提示词数量限制）
+  const len = r.length;
+  const el = $('outLen');
+  if (len && len.words) {
+    el.className = 'len';
+    el.textContent = '正文 ' + len.words + ' 词 / 约 ' + len.value + ' token';
+  } else { el.textContent = ''; el.className = 'len'; }
+
+  const p = r.params || {};
+  $('outKv').innerHTML = [
+    'steps <b>' + (p.steps || '-') + '</b>',
+    'cfg <b>' + (p.cfg || '-') + '</b>',
+    p.sampler ? 'sampler <b>' + p.sampler + '</b>' : '',
+    '尺寸 <b>' + (p.size || '-') + '</b>',
+    r.familyLabel ? '族 <b>' + r.familyLabel + '</b>' : '',
+    r.model ? '模型 <b>' + r.model + '</b>' : '',
+    r.wd14Ms ? 'WD14 <b>' + r.wd14Ms + 'ms</b>' : '',
+    r.rating ? '安全档 <b>' + r.rating + '</b>' : '',
+  ].filter(Boolean).join('');
+
+  const notes = r.notes || [];
+  $('outNotes').innerHTML = notes.map((n) => '<li>' + String(n) + '</li>').join('');
+}
+
+// ── 动作 ───────────────────────────────────────────────────────────────────
+async function run(kind) {
+  busy(true);
+  try {
+    let r;
+    if (kind === 'gen') {
+      r = await post('/compose', {
+        mode: 'gen', family: state.family,
+        brief: $('brief').value, base: $('base').value,
+        model: $('model').value, hardNote: $('hardNote').value,
+      });
+    } else if (kind === 'refine') {
+      r = await post('/compose', {
+        mode: 'refine', family: state.family,
+        source: $('source').value, base: $('refBase').value,
+        model: $('model').value, hardNote: $('hardNote').value,
+      });
+    } else if (kind === 'iterate') {
+      r = await post('/compose', {
+        mode: 'iterate', family: state.family,
+        positive: $('iterPos').value, negative: $('iterNeg').value,
+        feedback: $('feedback').value,
+        model: $('model').value, hardNote: $('hardNote').value,
+      });
+    } else if (kind === 'reverse') {
+      const payload = { family: state.family, model: $('model').value,
+        organize: $('organize').checked, hardNote: $('hardNote').value,
+        engine: $('engine').value };
+      if (state.imageB64) payload.imageB64 = state.imageB64;
+      else if ($('imgPath').value.trim()) payload.path = $('imgPath').value.trim();
+      else throw new Error('请先选图或填 NAS 路径');
+      $('revEngine').innerHTML = '<span class="spin"></span> 正在反推（'
+        + (payload.engine === 'wd14' ? 'WD14' : 'VLM 优先') + '）…';
+      r = await post('/reverse', payload);
+      renderEngineInfo(r);
+    }
+    renderResult(r);
+    setStatus('完成', 'ok');
+  } catch (e) {
+    setStatus('失败', 'err');
+    $('outNotes').innerHTML = '<li style="color:var(--err)">' + String(e.message || e) + '</li>';
+    if (kind === 'reverse') $('revEngine').innerHTML = '<span style="color:var(--err)">反推失败</span>';
+  } finally {
+    busy(false);
+  }
+}
+
+$('runGen').onclick = () => run('gen');
+$('runRefine').onclick = () => run('refine');
+$('runIterate').onclick = () => run('iterate');
+$('runReverse').onclick = () => run('reverse');
+$('copyPos').onclick = () => copy($('outPos').value);
+$('copyNeg').onclick = () => copy($('outNeg').value);
+$('camCopy').onclick = () => copy($('camOut').textContent);
+$('camInsert').onclick = () => {
+  const t = $('camOut').textContent;
+  if (state.tab === 'gen') $('brief').value = ($('brief').value || '') + (t ? (', ' + t) : '');
+  else if (state.tab === 'refine') $('source').value = ($('source').value || '') + (t ? (', ' + t) : '');
+  else copy(t);
+};
+$('camStyle').onclick = () => {
+  state.camStyle = state.camStyle === 'standard' ? 'generic' : 'standard';
+  $('camStyle').textContent = '写法：' + (state.camStyle === 'standard' ? 'LoRA 标准' : '通用英文');
+  refreshCam();
+};
+$('toRefine').onclick = () => {
+  $('source').value = $('outPos').value; setTab('refine');
+};
+$('toIterate').onclick = () => {
+  $('iterPos').value = $('outPos').value;
+  $('iterNeg').value = $('outNeg').value;
+  setTab('iterate');
+};
+$('probe').onclick = async () => {
+  $('probeOut').innerHTML = '<div class="hint">检测中…</div>';
+  try {
+    const r = await post('/probe', {});
+    const l = r.llm || {}, w = r.wd14 || {};
+    $('probeOut').innerHTML =
+      '<div class="note ' + (l.ok ? 'ok' : 'err') + '">LLM：' +
+      (l.ok ? '可用（' + l.base + '，' + (l.available || 0) + ' 个模型）' : '不可用 — ' + (l.error || '?')) + '</div>' +
+      '<div class="note ' + (w.ok ? 'ok' : 'err') + '">WD14：' +
+      (w.ok ? '可用（' + (w.model || '') + '，' + (w.loaded ? '模型已加载' : '未加载') + '）' : '不可用 — ' + (w.error || '?')) + '</div>';
+  } catch (e) {
+    $('probeOut').innerHTML = '<div class="note err">' + e.message + '</div>';
+  }
+};
+
+// ── ⑤ 标签详情 ──────────────────────────────────────────────────────────────
+const CAT_LABEL = {
+  general: '通用', character: '角色', copyright: '作品', artist: '画师', meta: '元数据',
+};
+let tagState = { name: '', tab: 'wiki' };
+
+function catClass(cat) { return 'cat-' + (cat || 'general'); }
+
+function renderTagList(list) {
+  const box = $('tagResults');
+  box.innerHTML = '';
+  if (!list.length) {
+    box.innerHTML = '<div class="hint" style="margin-top:10px">没有匹配的标签</div>';
+    return;
+  }
+  const wrap = document.createElement('div');
+  wrap.className = 'taglist';
+  list.forEach((t) => {
+    const b = document.createElement('button');
+    b.className = 'tagrow';
+    b.innerHTML = '<span class="tn">' + t.name + '</span>'
+      + '<span class="tc ' + catClass(t.category) + '">' + (CAT_LABEL[t.category] || t.category) + '</span>'
+      + '<span class="tc">' + (t.postCount || 0).toLocaleString() + ' 帖</span>';
+    b.onclick = () => openTag(t.name, t.category, t.postCount);
+    wrap.appendChild(b);
+  });
+  box.appendChild(wrap);
+}
+
+async function onTagSearch() {
+  const q = $('tagQ').value.trim();
+  if (!q) return;
+  $('tagResults').innerHTML = '<div class="hint" style="margin-top:10px"><span class="spin"></span> 搜索中…</div>';
+  try {
+    const r = await api('/tags?q=' + encodeURIComponent(q) + '&limit=25');
+    renderTagList(r.tags || []);
+    // 只有一个精确匹配时直接打开详情
+    const exact = (r.tags || []).find((t) => t.name === q.toLowerCase().replace(/\s+/g, '_'));
+    if (exact) openTag(exact.name, exact.category, exact.postCount);
+  } catch (e) {
+    $('tagResults').innerHTML = '<div class="note err">' + e.message + '</div>';
+  }
+}
+
+async function openTag(name, category, postCount) {
+  tagState = { name, tab: 'wiki' };
+  $('tagDetail').classList.remove('hidden');
+  $('tagName').textContent = name;
+  $('tagCat').textContent = CAT_LABEL[category] || category || '';
+  $('tagCat').className = 'badge ' + catClass(category);
+  $('tagCount').textContent = postCount ? postCount.toLocaleString() + ' 帖' : '';
+  document.querySelectorAll('[data-tagtab]').forEach((b) => {
+    b.classList.toggle('on', b.dataset.tagtab === 'wiki');
+  });
+  await loadTagPane('wiki');
+}
+
+async function loadTagPane(kind) {
+  tagState.tab = kind;
+  document.querySelectorAll('[data-tagtab]').forEach((b) => {
+    b.classList.toggle('on', b.dataset.tagtab === kind);
+  });
+  const pane = $('tagPane');
+  pane.innerHTML = '<div class="hint"><span class="spin"></span> 加载中…</div>';
+  try {
+    if (kind === 'wiki') {
+      const r = await post('/tag', { op: 'wiki', name: tagState.name });
+      pane.innerHTML = r.ok
+        ? '<div class="wiki">' + escapeHtml(r.body || '(无内容)') + '</div>'
+        : '<div class="hint">' + (r.error || '无 wiki') + '</div>';
+    } else if (kind === 'related') {
+      const r = await post('/tag', { op: 'related', name: tagState.name, limit: 18 });
+      const list = r.tags || [];
+      if (!list.length) { pane.innerHTML = '<div class="hint">无相关标签</div>'; return; }
+      // 单击 = 查看该标签；右键/中键 = 直接复制（省一步跳转）
+      pane.innerHTML = '<div class="hint" style="margin-bottom:6px">单击查看，右键复制</div>'
+        + '<div class="chips">' + list.map((t) =>
+          '<button class="chip" data-rel="' + escapeAttr(t.name) + '" title="单击查看 / 右键复制">'
+          + t.name + '</button>').join('') + '</div>';
+      pane.querySelectorAll('[data-rel]').forEach((b) => {
+        b.onclick = () => { $('tagQ').value = b.dataset.rel; openTag(b.dataset.rel, '', 0); };
+        b.oncontextmenu = (e) => {
+          e.preventDefault();
+          copy(b.dataset.rel);
+        };
+      });
+    } else {
+      const r = await post('/tag', { op: 'posts', name: tagState.name, limit: 10, ratings: 'g,s' });
+      const list = r.posts || [];
+      if (!list.length) { pane.innerHTML = '<div class="hint">无示例图</div>'; return; }
+      pane.innerHTML = '<div class="grid">' + list.map((p) =>
+        '<figure><img loading="lazy" src="/api/thumb?u=' + encodeURIComponent(p.large || p.preview)
+        + '" data-full="' + encodeURIComponent(p.original || p.large || p.preview)
+        + '" alt="' + p.id + '"><figcaption>' + (p.score ?? '') + '</figcaption></figure>').join('') + '</div>';
+      // 点击看原图
+      pane.querySelectorAll('figure img').forEach((img) => {
+        img.onclick = () => window.open('/api/thumb?u=' + img.dataset.full, '_blank');
+      });
+    }
+  } catch (e) {
+    pane.innerHTML = '<div class="note err">' + e.message + '</div>';
+  }
+}
+
+$('runTagSearch').onclick = onTagSearch;
+$('tagQ').onkeydown = (e) => { if (e.key === 'Enter') onTagSearch(); };
+document.querySelectorAll('[data-tagtab]').forEach((b) => {
+  b.onclick = () => loadTagPane(b.dataset.tagtab);
+});
+
+// 标签名按当前族的写法输出（tag 族用下划线，其他转空格）
+function tagOutName() {
+  const f = state.families.find((x) => x.id === state.family);
+  const raw = tagState.name;
+  // 与后端 normalizeSeparators 保持一致：kind=tag 且未声明 separator 时保留下划线
+  const useSpace = f && (f.kind === 'tag+NL' || f.kind === 'NL');
+  return useSpace ? raw.replace(/_/g, ' ') : raw;
+}
+$('tagCopy').onclick = () => copy(tagOutName());
+$('tagCopyComma').onclick = () => copy(tagOutName() + ', ');
+$('tagInsert').onclick = () => {
+  const name = tagOutName();
+  const target = $('brief');
+  target.value = (target.value ? target.value.replace(/\s+$/, '') + ', ' : '') + name;
+  setStatus('已插入 ' + name, 'ok');
+};
+
+// ── ⑥ 角色库 ────────────────────────────────────────────────────────────────
+async function onCharSearch() {
+  const q = $('charQ').value.trim();
+  if (!q) return;
+  const box = $('charResults');
+  box.innerHTML = '<div class="hint" style="margin-top:10px"><span class="spin"></span> 检索中（Danbooru 核验 + Viking 语义）…</div>';
+  try {
+    const r = await post('/character', { query: q, limit: 3 });
+    box.innerHTML = '';
+
+    // 推荐写法
+    if (r.suggested) {
+      const d = document.createElement('div');
+      d.className = 'note ok';
+      d.innerHTML = '推荐写法：<b class="mono">' + r.suggested + '</b>'
+        + (r.normalized && r.normalized !== r.suggested
+          ? ' <span class="hint">（输入 ' + r.normalized + '）</span>' : '');
+      box.appendChild(d);
+    }
+
+    // 提示
+    for (const n of (r.notes || [])) {
+      const d = document.createElement('div');
+      d.className = 'note warn';
+      d.textContent = n;
+      box.appendChild(d);
+    }
+
+    // 分类结果
+    const sections = [
+      ['角色', r.characters, 'character'],
+      ['作品', r.works, 'copyright'],
+      ['其他匹配', r.others, 'general'],
+    ];
+    for (const [label, list, cat] of sections) {
+      if (!list || !list.length) continue;
+      const h = document.createElement('h4');
+      h.textContent = label + '（' + list.length + '）';
+      box.appendChild(h);
+      const wrap = document.createElement('div');
+      wrap.className = 'taglist';
+      list.forEach((x) => {
+        const b = document.createElement('button');
+        b.className = 'tagrow';
+        b.innerHTML = '<span class="tn">' + x.name + '</span>'
+          + '<span class="tc">' + (x.postCount || 0).toLocaleString() + ' 帖</span>';
+        b.onclick = () => {
+          $('tagQ').value = x.name;
+          setTab('tags');
+          openTag(x.name, cat, x.postCount);
+        };
+        wrap.appendChild(b);
+      });
+      box.appendChild(wrap);
+    }
+
+    // Viking 参考
+    if (r.refs && r.refs.length) {
+      const h = document.createElement('h4');
+      h.textContent = '知识库参考（Viking，' + r.refs.length + '）';
+      box.appendChild(h);
+      for (const ref of r.refs) {
+        const d = document.createElement('div');
+        d.className = 'refcard';
+        d.innerHTML = '<div class="ruri">' + escapeHtml(ref.uri || '')
+          + (ref.score != null ? ' <span class="rscore">' + ref.score.toFixed(3) + '</span>' : '')
+          + '</div>'
+          + (ref.abstract ? '<div class="rabstract">' + escapeHtml(ref.abstract.slice(0, 300)) + '</div>' : '');
+        box.appendChild(d);
+      }
+    }
+
+    if (!r.suggested && !(r.refs || []).length) {
+      box.innerHTML += '<div class="hint" style="margin-top:10px">没有找到结果</div>';
+    }
+  } catch (e) {
+    box.innerHTML = '<div class="note err">' + e.message + '</div>';
+  }
+}
+
+$('runChar').onclick = onCharSearch;
+$('charQ').onkeydown = (e) => { if (e.key === 'Enter') onCharSearch(); };
+
+// ── ⚙ 规则 / 预设 ───────────────────────────────────────────────────────────
+let rulesData = null;
+
+async function loadRules() {
+  try {
+    const r = await api('/rules');
+    rulesData = r;
+    renderPresets(r.presets || []);
+    $('rulesJson').value = JSON.stringify(r.rules, null, 2);
+    $('rulesMsg').innerHTML = r.writable
+      ? '<div class="note ok">可保存（写入 ' + escapeHtml(r.writeTarget || '') + '）</div>'
+      : '<div class="note warn">只读挂载：' + escapeHtml(r.writeTarget || '') + '</div>';
+    $('saveRules').disabled = !r.writable;
+  } catch (e) {
+    $('presetView').innerHTML = '<div class="note err">' + e.message + '</div>';
+  }
+}
+
+function renderPresets(presets) {
+  const box = $('presetView');
+  if (!presets.length) { box.innerHTML = '<div class="hint">没有族规则</div>'; return; }
+  box.innerHTML = '';
+  presets.forEach((p) => {
+    const d = document.createElement('div');
+    d.style.cssText = 'border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:8px;background:var(--bg)';
+    const params = p.params || {};
+    let h = '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
+      + '<b style="font-size:13px">' + escapeHtml(p.label) + '</b>'
+      + '<span class="badge">' + escapeHtml(p.kind || '') + '</span>'
+      + '</div>';
+
+    if (p.qualityPrefix) {
+      h += '<div class="hint" style="margin-top:6px">正向前缀：<code class="mono">'
+        + escapeHtml(p.qualityPrefix) + '</code></div>';
+    }
+    if (p.negative) {
+      h += '<div class="hint">负面词：<code class="mono">' + escapeHtml(p.negative) + '</code></div>';
+    }
+    if (params.steps || params.cfg) {
+      h += '<div class="hint">参数：steps=' + escapeHtml(String(params.steps || '-'))
+        + '  cfg=' + escapeHtml(String(params.cfg || '-'))
+        + (params.sampler ? '  sampler=' + escapeHtml(String(params.sampler)) : '')
+        + '  size=' + escapeHtml(String(params.size || '-')) + '</div>';
+    }
+
+    if (p.styles && p.styles.length) {
+      h += '<div style="margin-top:8px"><div class="hint" style="font-weight:600">风格档（预设）</div>';
+      p.styles.forEach((s) => {
+        h += '<div style="margin-top:5px;padding:6px 8px;border-left:2px solid var(--accent);background:var(--layer2);border-radius:0 6px 6px 0">'
+          + '<div style="font-size:12px;font-weight:600">' + escapeHtml(s.label)
+          + ' <span class="badge">' + escapeHtml(s.key) + '</span></div>';
+        if (s.qualityPrefix) {
+          h += '<div class="hint">前缀：<code class="mono">' + escapeHtml(s.qualityPrefix) + '</code></div>';
+        }
+        if (s.rules.length) {
+          h += '<ul class="notes" style="margin:4px 0 0;padding-left:16px">'
+            + s.rules.map((r) => '<li>' + escapeHtml(r) + '</li>').join('') + '</ul>';
+        }
+        h += '</div>';
+      });
+      h += '</div>';
+    }
+    d.innerHTML = h;
+    box.appendChild(d);
+  });
+}
+
+document.querySelectorAll('[data-ruletab]').forEach((b) => {
+  b.onclick = () => {
+    const k = b.dataset.ruletab;
+    document.querySelectorAll('[data-ruletab]').forEach((x) => x.classList.toggle('on', x === b));
+    $('rulePane-presets').classList.toggle('hidden', k !== 'presets');
+    $('rulePane-edit').classList.toggle('hidden', k !== 'edit');
+  };
+});
+
+$('saveRules').onclick = async () => {
+  $('rulesMsg').innerHTML = '<div class="hint"><span class="spin"></span> 保存中…</div>';
+  try {
+    const parsed = JSON.parse($('rulesJson').value);
+    const r = await post('/rules', { rules: parsed });
+    $('rulesMsg').innerHTML = '<div class="note ok">' + escapeHtml(r.note || '已保存') + '</div>';
+    // 刷新族列表（预设可能变了）
+    await initFams();
+    renderPresets(r.presets || []);
+  } catch (e) {
+    $('rulesMsg').innerHTML = '<div class="note err">' + escapeHtml(e.message) + '</div>';
+  }
+};
+$('reloadRules').onclick = loadRules;
+$('copyRules').onclick = () => copy($('rulesJson').value);
+
+// ── 小工具 ──────────────────────────────────────────────────────────────────
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+  ));
+}
+function escapeAttr(s) { return escapeHtml(s); }
+
+// ── 启动 ───────────────────────────────────────────────────────────────────
+
+/** 重新拉族列表（规则改动后预设会变，需要刷）。 */
+async function initFams() {
+  const cfg = await api('/config');
+  state.families = cfg.families || [];
+  if (!state.families.some((f) => f.id === state.family)) {
+    state.family = state.families[0] ? state.families[0].id : 'generic';
+  }
+  renderFams();
+  return cfg;
+}
+
+(async function init() {
+  try {
+    const cfg = await api('/config');
+    state.families = cfg.families || [];
+    state.family = state.families[0] ? state.families[0].id : 'generic';
+    state.camCfg = cfg.camera;
+    renderFams();
+
+    const sel = $('model');
+    sel.innerHTML = '';
+    (cfg.models || []).forEach((m) => {
+      const o = document.createElement('option');
+      o.value = m.id;
+      o.textContent = (m.label || m.id) + ' · ' + m.id;
+      if (m.id === cfg.defaultModel) o.selected = true;
+      sel.appendChild(o);
+    });
+
+    if (cfg.camera && cfg.camera.default) {
+      Object.assign(state.cam, cfg.camera.default);
+    }
+    renderCamSide();
+    refreshCam();
+    setStatus('就绪', 'ok');
+  } catch (e) {
+    setStatus('配置加载失败', 'err');
+    $('outNotes').innerHTML = '<li style="color:var(--err)">' + e.message + '</li>';
+  }
+})();
+
+window.addEventListener('resize', drawRadar);
+</script>
+</body>
+</html>

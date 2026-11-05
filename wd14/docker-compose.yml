@@ -1,0 +1,49 @@
+# WD14 反推微服务
+#
+# 安全基线：
+#   - restart: unless-stopped
+#   - no-new-privileges + cap_drop ALL
+#   - TZ=Asia/Shanghai
+#   - 模型文件较大，建议挂到数据盘而非系统盘
+#
+# 端口 33001
+services:
+  wd14:
+    container_name: prompt-lab-wd14
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: prompt-lab-wd14:latest
+    restart: unless-stopped
+    ports:
+      - "0.0.0.0:33001:8199"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # 低配机器（如 Celeron）：限制资源，避免与其它容器抢核
+    mem_limit: 2g
+    cpus: "1.8"
+    volumes:
+      # 模型放数据盘，只读挂载
+      - ./data/models/wd14:/models:ro
+      # 图片目录：反推时可按 NAS 路径直接读（避免大图 base64 过 HTTP）
+      # 本地图片目录（按需改路径）
+      - ./images:/images:ro
+    environment:
+      - TZ=Asia/Shanghai
+      - WD14_MODEL_DIR=/models
+      # 2 核 Celeron 3855U（只有 SSE4.2，无 AVX）。
+      # 实测：ALL 优化 + 2 线程 = 6.7s/图（稳定）；EXTENDED = 8.9s。
+      - WD14_THREADS=2
+      - WD14_OPT=all
+      # 模型固定 448 输入，改这个会报维度错误
+      - WD14_INPUT_SIZE=448
+      # 启动即加载模型（约 4.2 秒），避免首个请求吃延迟
+      - WD14_WARMUP=1
+      - PORT=8199
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

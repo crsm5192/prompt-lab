@@ -1,0 +1,58 @@
+# 提示词工作台 · NAS 版（Web 服务）
+#
+# 安全基线：
+#   - restart: unless-stopped
+#   - no-new-privileges + cap_drop ALL
+#   - TZ=Asia/Shanghai
+#
+# 端口 33002（web）；WD14 用 33001
+#
+# ⚠️ 关键：WORKBUDDY_API_KEY 从宿主机环境传入。
+#    不要把 key 写进 compose 文件（会进 git / 备份）。
+#    宿主机上先 export，或用同目录的 .env 文件（docker compose 自动读取）。
+services:
+  web:
+    container_name: prompt-lab-web
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: prompt-lab-web:latest
+    restart: unless-stopped
+    ports:
+      - "0.0.0.0:33002:33002"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 512m
+    volumes:
+      # 配置：只读（改完重启容器生效）
+      - ./config.json:/app/config.json:ro
+      # 规则：**读**用只读挂载，**写**走下面的可写目录
+      # （同一文件挂两次：/app/rules.json:ro 给运行时读，
+      #   /data/rules.json:rw 给「保存规则」写）
+      - ./rules.json:/app/rules.json:ro
+      - ./rules.json:/data/rules.json
+      # 图片目录（反推时可按 NAS 路径读）
+      # 本地图片目录（按需改路径；反推时可按容器内路径读图）
+      - ./images:/images:ro
+    environment:
+      - TZ=Asia/Shanghai
+      # ⚠️ 从宿主机环境继承，不落盘（值来自同目录 .env，compose 自动读取）
+      - WORKBUDDY_API_KEY=${WORKBUDDY_API_KEY}
+      # OpenViking 的 user 级 key（root key 不能访问数据 API）
+      - OPENVIKING_API_KEY=${OPENVIKING_API_KEY}
+      # 「保存规则」写这里（可写挂载；不配则规则页只能看不能存）
+      - RULES_WRITE_PATH=/data/rules.json
+      - NODE_ENV=production
+    # 与 WD14 在同一宿主机：用 host 网络访问 127.0.0.1:33001 更简单，
+    # 但那样会失去端口隔离。这里用默认 bridge，通过 host.docker.internal
+    # 或宿主机局域网 IP 访问 WD14。
+    # 102 上 WD14 绑 0.0.0.0:33001，所以用宿主机网关即可。
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
