@@ -138,45 +138,82 @@ t('系统提示要求不带质量词与安全标签', () => {
   assert(!/推荐正向前缀/.test(sys), '仍在要求正向前缀')
 })
 
-console.log('\n[6] 长度限制已停用')
-t('pickBudget 恒返回 null', () => {
+console.log('\n[6] 长度上限（实测标定）')
+t('pickBudget 恒返回 null（预算改由 LEN_LIMITS 内置）', () => {
   eq(pickBudget(config.lengthBudget, fam('anima')), null)
-  eq(pickBudget(config.lengthBudget, fam('noobai')), null)
 })
-t('config 里已无 lengthBudget', () => {
-  eq(config.lengthBudget, undefined)
+t('anima 上限取自实测：440/580 token', () => {
+  const m = measureLength('1girl, solo', fam('anima'), merged)
+  eq(m.targetMax, 440)
+  eq(m.hardMax, 580)
 })
-t('measureLength 只统计不设限', () => {
-  const long = Array(2000).fill('word').join(' ')
-  const m = measureLength(long, fam('anima'), merged)
+t('超目标触发 warn（未超硬限）', () => {
+  // 约 500 token，介于 440 与 580 之间
+  const t500 = Array(345).fill('word').join(' ')
+  const m = measureLength(t500, fam('anima'), merged)
+  assert(m.value > 440 && m.value <= 580, `token=${m.value}`)
+  eq(m.warn, true)
   eq(m.over, false)
-  eq(m.warn, false)
-  eq(m.targetMax, 0)
-  eq(m.hardMax, 0)
-  eq(m.words, 2000)
 })
-t('短文本也不告警', () => {
+t('超硬限触发 over', () => {
+  const t700 = Array(500).fill('word').join(' ')  // ≈725 token
+  const m = measureLength(t700, fam('anima'), merged)
+  assert(m.value > 580, `token=${m.value}`)
+  eq(m.over, true)
+})
+t('用户实测的 688 词/963 token 会被判 over', () => {
+  const big = Array(688).fill('word').join(' ')
+  const m = measureLength(big, fam('anima'), merged)
+  assert(m.value > 900, `token=${m.value}`)
+  eq(m.over, true)
+})
+t('noobai 用 77 token 硬限', () => {
+  const m = measureLength('1girl, solo', fam('noobai'), merged)
+  eq(m.hardMax, 77)
+})
+t('短文本不告警', () => {
   const m = measureLength('best quality, 1girl, solo', fam('anima'), merged)
   eq(m.over, false); eq(m.warn, false)
+})
+t('余量计算：短文有正余量', () => {
+  const m = measureLength('1girl, solo, long hair', fam('anima'), merged)
+  assert(m.headroomWords > 200, `余量 ${m.headroomWords}`)
 })
 t('中文长度统计正确（不按空格分词）', () => {
   const cn = '超写实电影感摄影，雨夜，旧书店门口，白发少女站在门框旁。'
   const m = measureLength(cn, fam('anima'), merged)
   assert(m.cjkChars > 20, `CJK 字数应 > 20，实际 ${m.cjkChars}`)
   assert(m.words > 20, `词数应 > 20，实际 ${m.words}`)
-  assert(m.value > 20, `token 应 > 20，实际 ${m.value}`)
 })
 t('英文长度统计正常', () => {
   const m = measureLength('1girl, solo, white hair, long hair, wet street', fam('anima'), merged)
   eq(m.latinWords, 8)
   eq(m.cjkChars, 0)
 })
-t('系统提示不含任何字数要求（五个族）', () => {
-  for (const id of ['noobai', 'anima', 'krea2', 'generic', 'moss']) {
-    const sys = buildSystem(fam(id), 'gen', merged, '')
-    assert(!/长度预算|词数预算|硬上限|词以内/.test(sys), `族 ${id} 仍含字数要求`)
-  }
+t('Layout JSON 不参与长度判定', () => {
+  const json = JSON.stringify({ summary: { caption: 'x' }, items: [{ label: 'text', caption: 'y', text: 'z', bbox: [-1, -1, 1, 1] }] })
+  const m = measureLength(json, fam('moss'), merged)
+  eq(m.over, false); eq(m.warn, false)
 })
+
+console.log('\n[6.5] 重复度检测')
+t('同一句重复 10 次能被检出', () => {
+  const rep = 'A girl stands by the window. '.repeat(10) + 'The rain falls softly.'
+  const m = measureLength(rep, fam('anima'), merged)
+  eq(m.repetition.top, 10)
+})
+t('句句不同则不报重复', () => {
+  const uniq = 'The jacket fabric has a matte weave. A railing runs behind her. ' +
+               'A ventilation grate exhales vapour. Storefront awnings recede down the block.'
+  const m = measureLength(uniq, fam('anima'), merged)
+  eq(m.repetition.top, 1)
+})
+t('近似重复（词袋重叠 >80%）计入 nearPairs', () => {
+  const near = 'The neon light glows on the wet street. The neon light glows on the wet pavement.'
+  const m = measureLength(near, fam('anima'), merged)
+  assert(m.repetition.nearPairs >= 1, `nearPairs=${m.repetition.nearPairs}`)
+})
+
 console.log('\n[7] 相机角度（VNCCS 基准）')
 t('az270/el30/wide -> left side view elevated shot wide shot', () => {
   eq(cameraPrompt({ azimuth: 270, elevation: 30, distance: 'wide shot' }, config.camera).text,
@@ -258,7 +295,7 @@ console.log('\n[8] 系统提示拼装')
 t('含族规则', () => {
   const s = buildSystem(fam('anima'), 'gen', merged)
   assert(s.includes('Anima'), '缺族名')
-  assert(!/长度预算|硬上限/.test(s), '不应再含长度预算')
+  assert(!/长度预算 · 用户要留画风余量/.test(s), '不应再有旧的预算段落')
 })
 t('含输出格式要求', () => {
   const s = buildSystem(fam('krea2'), 'refine', merged)

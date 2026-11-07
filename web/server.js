@@ -118,6 +118,38 @@ function familyList() {
   })
 }
 
+/**
+ * 长度与重复体检，统一给 notes 追加告警。
+ *
+ * 阈值来自 2026-11 本机 A/B 实测（见 engine.js 的 LEN_LIMITS 注释）。
+ * 只告警不裁剪：裁掉内容会破坏画面语义。
+ *
+ * @returns {object|null} measureLength 的结果，供接口回传
+ */
+function checkLengthAndRepeat(positive, family, notes) {
+  let len = null
+  try {
+    len = measureLength(positive, family, rules)
+  } catch {
+    return null
+  }
+  if (!len) return null
+  if (len.over) {
+    notes.unshift(`⚠ 正文约 ${len.value} token（硬上限 ${len.hardMax}，约 ${Math.round(len.hardMax / 1.45)} 词）。`
+      + `实测超过这个量会丢低权重细节、景别漂移，建议精简到 ${len.targetMax} token 以内。`)
+  } else if (len.warn) {
+    notes.unshift(`正文约 ${len.value} token（建议上限 ${len.targetMax}，约 ${Math.round(len.targetMax / 1.45)} 词）。`
+      + `实测这个长度起容易丢细节（发饰、配饰等）并让景别变远，可考虑精简。`)
+  }
+  const rep = len.repetition || {}
+  if (rep.top >= 3 || rep.ratio >= 30) {
+    notes.unshift(`⚠ 重复度偏高：有一句重复了 ${rep.top} 次${rep.sample ? `（"${rep.sample.slice(0, 40)}…"）` : ''}`
+      + `，近似重复 ${rep.nearPairs || 0} 对。实测重复会放大该概念的权重、压过其它描述`
+      + `（例如反复写 neon 会把服装染成荧光色），建议改写而不是复述。`)
+  }
+  return len
+}
+
 // ── 核心：生成/润色/迭代/整理 ───────────────────────────────────────────────
 
 async function doCompose(payload) {
@@ -162,6 +194,8 @@ async function doCompose(payload) {
       }
       const fp = f.params || {}
       const positive = finalizeText(pos, f, rules, neg)
+      const notes1 = ['模型输出的 JSON 格式不规范（多为字符串内直接换行），已自动修复字段']
+      const len1 = checkLengthAndRepeat(positive, f, notes1)
       return {
         ok: true,
         positive,
@@ -172,16 +206,18 @@ async function doCompose(payload) {
           sampler: sp.sampler || asString(fp.sampler),
           size: sp.size || asString(fp.size),
         },
-        notes: ['模型输出的 JSON 格式不规范（多为字符串内直接换行），已自动修复字段'],
-        length: measureLength(positive, f, rules),
+        notes: notes1,
+        length: len1,
         ...meta,
       }
     }
     const positive = finalizeText(r.text.trim(), f, rules)
+    const notes2 = ['模型未返回标准 JSON，已按纯文本输出']
+    const len2 = checkLengthAndRepeat(positive, f, notes2)
     return {
       ok: true, positive, negative: '', params: f.params || {},
-      notes: ['模型未返回标准 JSON，已按纯文本输出'],
-      length: measureLength(positive, f, rules), ...meta,
+      notes: notes2,
+      length: len2, ...meta,
     }
   }
 
@@ -240,8 +276,7 @@ async function doCompose(payload) {
 
   const negFinal = normalizeSeparators(stripForbidden(negRaw, rules.wording), f)
 
-  // 长度：只统计不设限（用户要求去掉提示词数量限制），不再产生任何告警
-  const len = measureLength(positive, f, rules)
+  const len = checkLengthAndRepeat(positive, f, notes)
 
   return {
     ok: true,
@@ -441,7 +476,7 @@ async function doReverse(payload) {
           vlmModel: vlmResult.model,
           llmUsed: true,
           notes,
-          length: measureLength(final, f, rules),
+          length: checkLengthAndRepeat(final, f, notes),
           family: payload.family,
           familyLabel: asString(f.label),
         }
@@ -495,7 +530,7 @@ async function doReverse(payload) {
     llmUsed,
     vlmTried,
     notes,
-    length: measureLength(final, f, rules),
+    length: checkLengthAndRepeat(final, f, notes),
     family: payload.family,
     familyLabel: asString(f.label),
   }

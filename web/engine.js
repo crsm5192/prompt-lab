@@ -270,41 +270,114 @@ export function pickBudget() {
 }
 
 /**
- * 长度统计 —— **只统计，不设限**。
+ * 长度与重复体检。
  *
- * 用户明确要求去掉提示词数量限制，所以这里不再判断 over / warn，
- * 也不再给模型任何字数要求。保留 value/words/chars 只为界面上让人看到
- * 「当前写了多少」，纯信息展示。
+ * 阈值来自 2026-11 本机 A/B 实测（同一 seed，只改变提示词长度）：
+ *   100 / 240 / 380 / 510 / 750 / 920 token 六档
+ *   - 920 token：结构仍完整，但景别漂移、低权重细节丢失
+ *   - 510 token：半身→中景，发带等细节消失
+ *   - 750 token：人物朝向开始偏离 looking at viewer
+ *   - 300 词（≈440 token）内：主体与细节都稳
+ *
+ * 另一件更关键的事：**重复比长度更致命**。
+ * 实测重复同一句 25 次（仅 345 token），人物没崩，但 green jacket 被染成荧光亮绿——
+ * 重复会放大该概念的权重。所以这里同时统计「同义重复度」。
+ *
+ * 只告警、不裁剪：裁掉内容会破坏画面语义，宁可提示让人自己决定。
  */
+const LEN_LIMITS = {
+  // 单位：token（约 1.45 token/词）
+  'tag+NL': { target: 440, hard: 580 },   // anima
+  'NL': { target: 440, hard: 580 },       // krea2
+  'NL+layout': { target: 1200, hard: 2000 }, // moss（官方条件上限 4096）
+  tag: { target: 75, hard: 77 },          // noobai / generic：SDXL 77 token 硬分块
+}
+
 export function measureLength(text, family, rules) {
   const s = asString(text)
   if (!s) return null
 
   // 中文没有词间空格，纯按空格分词会把一整段中文数成 1 个词。
-  // 这里按字符类型分开统计：CJK 按字计（1 字 ≈ 1 token），西文按空格分词。
   const cjkChars = (s.match(/[\u4e00-\u9fa5\u3040-\u30ff]/g) || []).length
   const latinWords = s.replace(/[\u4e00-\u9fa5\u3040-\u30ff]/g, ' ')
     .split(/\s+/).filter(Boolean).length
-  const words = latinWords + cjkChars      // 中文按字算「词数」，避免显示成 2 词
+  const words = latinWords + cjkChars
   const chars = s.length
-  const approxTokens = Math.round(latinWords * 1.4 + cjkChars * 1.0)
+  const approxTokens = Math.round(latinWords * 1.45 + cjkChars * 1.0)
+
+  // 结构化的 Layout JSON 不做长度/重复判定（它是数据不是散文）
+  const isJson = s.trim().startsWith('{')
+
+  const kind = asString(family && family.kind) || 'tag'
+  const lim = LEN_LIMITS[kind] || LEN_LIMITS['tag+NL']
+  // tag 族正负共享 77 token 窗口，正文本身要留出负面词的空间
+  const target = lim.target
+  const hard = lim.hard
+
+  const value = approxTokens
+  const over = !isJson && value > hard
+  const warn = !isJson && value > target && value <= hard
+
+  // ── 重复度：按句统计完全相同或高度相似的句子 ──
+  const dup = isJson ? { top: 0, sample: '', ratio: 0 } : detectRepetition(s)
 
   return {
-    family,
-    unit: 'token',
-    value: approxTokens,
-    words,
-    chars,
-    approxTokens,
-    cjkChars,
-    latinWords,
-    // 保留字段避免前端报错，但一律为 false / 0（不再有限制语义）
-    over: false,
-    warn: false,
-    targetMax: 0,
-    hardMax: 0,
-    headroomWords: 0,
-    budget: null,
+    family, unit: 'token', value, words, chars, approxTokens, cjkChars, latinWords,
+    targetMax: target, hardMax: hard,
+    over, warn,
+    // 剩余可用于追加画风词的余量（词）
+    headroomWords: Math.max(0, Math.round((target - value) / 1.45)),
+    repetition: dup,
+    budget: { unit: 'token', targetMax: target, hardMax: hard },
+  }
+}
+
+/** 找出重复度最高的一句，用来提示「你在反复说同一件事」。 */
+export function detectRepetition(text) {
+  const s = asString(text)
+  if (!s) return { top: 0, sample: '', ratio: 0 }
+
+  // 按句子切分（含中文句号）；换行也算分隔
+  const raw = s.split(/(?<=[.!?。！？])\s+|\n+/).map((x) => x.trim()).filter((x) => x.length > 8)
+  if (raw.length < 2) return { top: 1, sample: raw[0] || '', ratio: 0 }
+
+  // 归一化后比较：小写、去标点、压空白
+  const norm = (x) => x.toLowerCase().replace(/[^a-z0-9\u4e00-\u9fa5 ]+/g, ' ').replace(/\s+/g, ' ').trim()
+  const counts = new Map()
+  for (const x of raw) {
+    const k = norm(x)
+    if (!k) continue
+    counts.set(k, (counts.get(k) || 0) + 1)
+  }
+  let top = 0
+  let sample = ''
+  for (const [k, n] of counts) {
+    if (n > top) { top = n; sample = k }
+  }
+
+  // 近似重复：把句子按词袋比对（重叠 >80% 视为同义反复）
+  const keys = [...counts.keys()]
+  let near = 0
+  if (keys.length >= 2) {
+    const bags = keys.map((k) => new Set(k.split(' ')))
+    for (let i = 0; i < bags.length; i++) {
+      for (let j = i + 1; j < bags.length; j++) {
+        const a = bags[i]; const b = bags[j]
+        const inter = [...a].filter((w) => b.has(w)).length
+        // 用「较小集合」作分母：Jaccard 对短句过于严苛，
+        // 「换一个词的同义复述」才是要抓的目标。
+        const base = Math.min(a.size, b.size)
+        if (base >= 4 && inter / base >= 0.8) near++
+      }
+    }
+  }
+
+  return {
+    top,                       // 同一句出现的最多次数
+    sample: sample.slice(0, 80),
+    ratio: raw.length ? Math.round(((top - 1 + near) / raw.length) * 100) : 0,
+    sentences: raw.length,
+    nearPairs: near,
   }
 }
 
