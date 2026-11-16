@@ -142,23 +142,23 @@ console.log('\n[6] 长度上限（实测标定）')
 t('pickBudget 恒返回 null（预算改由 LEN_LIMITS 内置）', () => {
   eq(pickBudget(config.lengthBudget, fam('anima')), null)
 })
-t('anima 上限取自实测：440/580 token', () => {
+t('anima 上限取自实测：300/380 token', () => {
   const m = measureLength('1girl, solo', fam('anima'), merged)
-  eq(m.targetMax, 440)
-  eq(m.hardMax, 580)
+  eq(m.targetMax, 300)
+  eq(m.hardMax, 380)
 })
 t('超目标触发 warn（未超硬限）', () => {
-  // 约 500 token，介于 440 与 580 之间
-  const t500 = Array(345).fill('word').join(' ')
-  const m = measureLength(t500, fam('anima'), merged)
-  assert(m.value > 440 && m.value <= 580, `token=${m.value}`)
+  // 约 345 token，介于 300 与 380 之间
+  const t345 = Array(238).fill('word').join(' ')
+  const m = measureLength(t345, fam('anima'), merged)
+  assert(m.value > 300 && m.value <= 380, `token=${m.value}`)
   eq(m.warn, true)
   eq(m.over, false)
 })
 t('超硬限触发 over', () => {
-  const t700 = Array(500).fill('word').join(' ')  // ≈725 token
-  const m = measureLength(t700, fam('anima'), merged)
-  assert(m.value > 580, `token=${m.value}`)
+  const t500 = Array(345).fill('word').join(' ')  // ≈500 token
+  const m = measureLength(t500, fam('anima'), merged)
+  assert(m.value > 380, `token=${m.value}`)
   eq(m.over, true)
 })
 t('用户实测的 688 词/963 token 会被判 over', () => {
@@ -194,6 +194,17 @@ t('Layout JSON 不参与长度判定', () => {
   const json = JSON.stringify({ summary: { caption: 'x' }, items: [{ label: 'text', caption: 'y', text: 'z', bbox: [-1, -1, 1, 1] }] })
   const m = measureLength(json, fam('moss'), merged)
   eq(m.over, false); eq(m.warn, false)
+})
+
+t('anima 出现 JSON 文本仍要判定长度（兜底路径漏判修复）', () => {
+  const big = '{ "positive": "' + Array(566).fill('word').join(' ') + '" }'
+  const m = measureLength(big, fam('anima'), merged)
+  eq(m.over, true, 'JSON 包裹的超长文本也应按正文判定')
+})
+t('moss 的 Layout JSON 跳过长度判定', () => {
+  const lay = JSON.stringify({ summary: { caption: 'x'.repeat(200) }, items: [{ label: 'text', caption: 'y', text: 'z', bbox: [-1, -1, 1, 1] }] })
+  const m = measureLength(lay, fam('moss'), merged)
+  eq(m.over, false)
 })
 
 console.log('\n[6.5] 重复度检测')

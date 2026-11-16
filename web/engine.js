@@ -287,7 +287,7 @@ export function pickBudget() {
  */
 const LEN_LIMITS = {
   // 单位：token（约 1.45 token/词）
-  'tag+NL': { target: 440, hard: 580 },   // anima
+  'tag+NL': { target: 300, hard: 380 },   // anima（实测 510 起丢细节，压到 300 保稳）
   'NL': { target: 440, hard: 580 },       // krea2
   'NL+layout': { target: 1200, hard: 2000 }, // moss（官方条件上限 4096）
   tag: { target: 75, hard: 77 },          // noobai / generic：SDXL 77 token 硬分块
@@ -306,20 +306,24 @@ export function measureLength(text, family, rules) {
   const approxTokens = Math.round(latinWords * 1.45 + cjkChars * 1.0)
 
   // 结构化的 Layout JSON 不做长度/重复判定（它是数据不是散文）
-  const isJson = s.trim().startsWith('{')
-
   const kind = asString(family && family.kind) || 'tag'
   const lim = LEN_LIMITS[kind] || LEN_LIMITS['tag+NL']
+
+  // 只有 moss 的 Layout JSON 才算「结构化数据」跳过判定。
+  // 其它族出现 { 开头的文本，几乎都是模型把整个 JSON 信封当成了正文
+  //（兜底路径），那种情况正需要长度告警，不能放过。
+  const isLayoutJson = kind === 'NL+layout' && s.trim().startsWith('{')
+
   // tag 族正负共享 77 token 窗口，正文本身要留出负面词的空间
   const target = lim.target
   const hard = lim.hard
 
   const value = approxTokens
-  const over = !isJson && value > hard
-  const warn = !isJson && value > target && value <= hard
+  const over = !isLayoutJson && value > hard
+  const warn = !isLayoutJson && value > target && value <= hard
 
   // ── 重复度：按句统计完全相同或高度相似的句子 ──
-  const dup = isJson ? { top: 0, sample: '', ratio: 0 } : detectRepetition(s)
+  const dup = isLayoutJson ? { top: 0, sample: '', ratio: 0 } : detectRepetition(s)
 
   return {
     family, unit: 'token', value, words, chars, approxTokens, cjkChars, latinWords,

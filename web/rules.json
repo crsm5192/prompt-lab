@@ -28,7 +28,7 @@
    "negative": "worst quality, low quality, lowres, bad anatomy, bad hands, missing fingers, extra fingers, fused fingers, extra digits, extra limbs, extra arms, extra legs, twisted limbs, malformed limbs, disconnected limbs, blurry, artist name, jpeg artifacts, chromatic aberration",
    "order": "[年份] -> [人数] -> [角色] -> [作品] -> [服饰/基础动作标签] -> [自然语言：外观细节/动作] -> [自然语言：画风/环境/光影]",
    "rules": [
-    "【长度上限 · 实测】正文控制在 **300 词（约 440 token）以内**，硬上限 400 词（约 580 token）。实测依据（2026-11 本机 A/B，同一 seed 只改长度）：100 / 240 / 380 / 510 / 750 / 920 token 六档，结构在 920 token 仍完整，但 510 token 起景别会漂移（半身→中景）、发带等低权重细节丢失，750 token 起人物朝向偏离「looking at viewer」。建议 300 词内以保证主体与细节都稳",
+    "【长度上限】正文控制在 **300 token 以内**（约 200 词），这是硬性要求。实测依据（2026-11 本机 A/B，同一 seed 只改长度）：100 / 240 / 380 / 510 / 750 / 920 token 六档；结构到 920 token 仍完整，但 510 token 起景别开始漂移（半身→中景）、发带等低权重细节丢失，750 token 起人物朝向偏离 looking at viewer。控制在 300 token 内可保证主体、细节与构图都稳定；写完请自检字数，宁简短不堆砌",
     "【重复是头号杀手，比长度更致命】同一概念（光影 / 颜色 / 材质 / 氛围形容词）**全篇最多出现 2 次**。实测：把「Neon light glows across the wet street」重复 25 次（仅 345 token），人物仍完整，但 green jacket 被染成荧光亮绿——重复会放大该概念的权重，压过其它描述。写长时靠「引入新维度」（材质/道具/构图/景深/天气），不要靠同义反复拉长度",
     "【长提示词的正确写法】若要写长，每句必须带来新的可执行视觉信息，句间不重复形容词。实测 50 句互不重复的描述（920 token）画面依然干净；而 20 句反复写 neon/teal/glow（750 token）会出现大块青蓝色光斑盖住面部。差别不在长度，在重复度",
     "【格式红线】标签全小写、单词间用空格而非下划线；只有 score_* 保留下划线。角色名/作品名按英文习惯首字母大写",
