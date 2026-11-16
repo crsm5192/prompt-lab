@@ -4,7 +4,7 @@
  * 与本机 DSH 插件的区别：
  *   - 本机版是 Cordis 插件，依赖 ctx.llm / ctx.webServer / ctx.attachments
  *   - 这里是独立 HTTP 服务，自带路由与 LLM 客户端
- *   - NSFW 反推只走 WD14（102 无 GPU，VLM 跑不了）
+ *   - VLM 经外部 API 调用；失败时按配置降级到本地 WD14
  *
  * 接口（前缀 /api）：
  *   GET  /api/config          -> 族列表、相机映射、预算
@@ -16,7 +16,7 @@
  *   GET  /                    -> 单页界面
  */
 import express from 'express'
-import { readFileSync, writeFileSync, existsSync } from 'node:fs'
+import { readFileSync, realpathSync, existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -25,7 +25,10 @@ import { createViking, createBooru } from './services.js'
 import { createSettings } from './settings.js'
 import { searchCharacter, verifyAnchors, applyAnchorFix } from './character.js'
 import { detectRefusal, extractTagsFromVlm } from './vlm.js'
-import { normalizeLayoutOutput } from './moss-layout.js'
+import { createRuleStore } from './rule-store.js'
+import { qualityDirection } from './art-direction.js'
+import { reviewPrompt } from './prompt-quality.js'
+import { validateTask, validateOutput, repairInstruction, compileResultLayout, inputError } from './output.js'
 import {
   asString, buildSystem, buildUser, extractJson, salvageField, fieldText,
   cameraPrompt, cameraFromPrompt, finalizeText, measureLength,
@@ -37,29 +40,27 @@ const HERE = dirname(fileURLToPath(import.meta.url))
 // ── 配置 ────────────────────────────────────────────────────────────────────
 
 function loadConfig() {
-  const p = join(HERE, 'config.json')
+  const p = process.env.CONFIG_PATH || join(HERE, 'config.json')
   if (!existsSync(p)) throw new Error(`配置缺失：${p}`)
   return JSON.parse(readFileSync(p, 'utf8'))
 }
 
-function loadRules() {
-  // 族规则单独放，便于与 DSH 版共享（可挂载同一份）
-  const cand = [join(HERE, 'rules.json'), join(HERE, 'config.json')]
-  for (const p of cand) {
-    if (!existsSync(p)) continue
-    try {
-      const j = JSON.parse(readFileSync(p, 'utf8'))
-      if (j && j.families) return { rules: j, source: p }
-    } catch { /* 继续 */ }
-  }
-  throw new Error('找不到含 families 段的规则文件（rules.json 或 config.json）')
+function rulesSource() {
+  // 先选择来源，再由规则存储校验或恢复备份；损坏文件不能绕过恢复入口。
+  if (process.env.RULES_READ_PATH) return process.env.RULES_READ_PATH
+  const separate = join(HERE, 'rules.json')
+  if (existsSync(separate)) return separate
+  return process.env.CONFIG_PATH || join(HERE, 'config.json')
 }
 
 const config = loadConfig()
-const { rules, source: rulesPath } = loadRules()
+const rulesPath = rulesSource()
+const RULES_WRITE_PATH = process.env.RULES_WRITE_PATH || ''
 
 // 运行时设置：LLM 的 URL / key / 模型可在界面里改，改完立即生效（无需重启）
 const settingsDir = process.env.SETTINGS_DIR || join(HERE, 'data')
+const ruleStore = createRuleStore({ readPath: rulesPath, writePath: RULES_WRITE_PATH, backupDir: join(settingsDir, 'rules-backups') })
+let rules = ruleStore.refresh()
 const settings = createSettings({ dir: settingsDir, defaults: config.llm })
 const llm = createLLM(() => settings.resolve())
 
@@ -94,7 +95,7 @@ async function probeWd14() {
   try {
     const res = await fetch(`${wd14Base}/health`, { signal: AbortSignal.timeout(8000) })
     const j = await res.json()
-    return { ok: true, base: wd14Base, ...j }
+    return { ...j, ok: res.ok && j.ok === true && j.loaded === true, base: wd14Base }
   } catch (e) {
     return { ok: false, base: wd14Base, error: String(e.message || e) }
   }
@@ -104,7 +105,8 @@ async function probeWd14() {
 
 function familyOf(id) {
   const fams = rules.families || {}
-  return fams[id] || fams.generic || null
+  if (id && !Object.hasOwn(fams, id)) throw inputError(`未知族：${id}`)
+  return id ? fams[id] : (Object.hasOwn(fams, 'generic') ? fams.generic : null)
 }
 
 function familyList() {
@@ -135,7 +137,7 @@ function checkLengthAndRepeat(positive, family, notes) {
   }
   if (!len) return null
   if (len.over) {
-    notes.unshift(`⚠ 正文约 ${len.value} token（硬上限 ${len.hardMax}，约 ${Math.round(len.hardMax / 1.45)} 词）。`
+    notes.unshift(`⚠ 正文约 ${len.value} token（超限告警阈值 ${len.hardMax}，约 ${Math.round(len.hardMax / 1.45)} 词）。`
       + `实测超过这个量会丢低权重细节、景别漂移，建议精简到 ${len.targetMax} token 以内。`)
   } else if (len.warn) {
     notes.unshift(`正文约 ${len.value} token（建议上限 ${len.targetMax}，约 ${Math.round(len.targetMax / 1.45)} 词）。`
@@ -152,7 +154,7 @@ function checkLengthAndRepeat(positive, family, notes) {
 
 // ── 核心：生成/润色/迭代/整理 ───────────────────────────────────────────────
 
-async function doCompose(payload) {
+async function doComposeOnce(payload) {
   const mode = ['gen', 'refine', 'iterate', 'reverse'].includes(payload.mode)
     ? payload.mode : 'gen'
   const f = familyOf(payload.family)
@@ -227,36 +229,6 @@ async function doCompose(payload) {
   let positive = finalizeText(fieldText(parsed.positive), f, rules, negRaw)
   const notes = Array.isArray(parsed.notes) ? parsed.notes.slice(0, 5).map(asString) : []
 
-  // MOSS-Image Layout：模型只写 abs/xyxy 草稿，坐标换算由代码做
-  //（官方明确要求模型不做算术）；模型若自己算了中心化坐标，校验后放行。
-  const pRaw = (parsed.params && typeof parsed.params === 'object') ? parsed.params : {}
-  let layoutInfo = null
-  try {
-    let lay = normalizeLayoutOutput(positive)
-    // 草稿缺 width/height 时，从模型给的 params.size 回填（"832x1536" / "832×1536"）
-    if (lay && lay.kind === 'draft-incomplete') {
-      const m = fieldText(pRaw.size).trim().match(/^(\d+)\s*[x×]\s*(\d+)$/i)
-      if (m) {
-        const draft = JSON.parse(positive.trim())
-        if (!('width' in draft)) draft.width = Number(m[1])
-        if (!('height' in draft)) draft.height = Number(m[2])
-        positive = JSON.stringify(draft)
-        lay = normalizeLayoutOutput(positive)
-      }
-    }
-    if (lay && lay.kind === 'compiled') {
-      layoutInfo = { width: lay.width, height: lay.height }
-      positive = lay.positive
-      notes.push(`已按官方规范编译 Layout 坐标：abs/xyxy → abs_centralized/yxyx；`
-        + `生成尺寸须为 ${lay.width}×${lay.height}（16 的倍数，且与 bbox 同一画布）`)
-    } else if (lay && lay.kind === 'model') {
-      positive = lay.positive
-      notes.push('模型已输出中心化坐标（yxyx），仅做校验未再换算；width×height 以 params.size 为准')
-    }
-  } catch (e) {
-    notes.push(`⚠ Layout 校验/编译失败：${String(e.message || e).slice(0, 140)}（已原样返回）`)
-  }
-
   // 锚点核验：角色/作品标签拿去 Danbooru 查存在性与类别，
   // 能确定性修正的（语序反了、缺 _(series) 后缀）直接改正文，其余写进备注。
   let anchors = []
@@ -283,13 +255,12 @@ async function doCompose(payload) {
     positive,
     negative: negFinal,
     params: {
+      ...fp, ...p,
       steps: asString(p.steps) || asString(fp.steps),
       cfg: asString(p.cfg) || asString(fp.cfg),
       sampler: asString(p.sampler) || asString(fp.sampler),
-      size: (layoutInfo ? `${layoutInfo.width}x${layoutInfo.height}` : '')
-        || asString(p.size) || asString(fp.size),
+      size: asString(p.size) || asString(fp.size),
     },
-    layout: layoutInfo,
     notes,
     length: len,
     anchors,
@@ -322,9 +293,11 @@ async function loadImageForVlm(payload) {
   if (payload.path) {
     const p = asString(payload.path)
     // 只允许读挂载进来的图片目录，防路径穿越
-    if (!/^\/(images|data)\//.test(p)) throw new Error(`路径必须在 /images/ 下：${p}`)
+    if (!/^\/images\//.test(p)) throw new Error(`路径必须在 /images/ 下：${p}`)
     if (p.includes('..')) throw new Error('路径非法')
-    const buf = readFileSync(p)
+    const resolved = realpathSync(p)
+    if (!resolved.startsWith(realpathSync('/images') + '/')) throw inputError('图片路径必须在 /images/ 下')
+    const buf = readFileSync(resolved)
     const mt = guessMediaTypeByExt(p)
     return { b64: buf.toString('base64'), mediaType: mt }
   }
@@ -347,7 +320,7 @@ function guessMediaType(b64OrDataUrl) {
   // 从 base64 头猜（iVBOR=PNG, /9j/=JPEG, UklGRklG=GIF, UklGRg=WEBP）
   if (s.startsWith('iVBOR')) return 'image/png'
   if (s.startsWith('/9j/')) return 'image/jpeg'
-  if (s.startsWith('UklGRklG')) return 'image/gif'
+  if (s.startsWith('R0lGOD')) return 'image/gif'
   if (s.startsWith('UklGRg')) return 'image/webp'
   return 'image/jpeg'
 }
@@ -375,6 +348,9 @@ async function reverseByVlm(payload, f) {
     '请直接观察这张图片，输出符合上述目标模型族规范的提示词。',
     '要求：',
     '1. 只输出 JSON（格式见上），不要任何解释、不要 markdown 代码块。',
+    repairInstruction(f, []),
+    qualityDirection({ familyKind: f.kind }, 'reverse'),
+    ...(asString(payload.hardNote).trim() ? [`用户硬约束：${asString(payload.hardNote).trim()}`] : []),
     '2. 如实描述画面中实际存在的元素：人物数量、发色发型、服装、姿势、表情、构图、视角、背景、光线。',
     '3. 不要因为画面涉及成人向主题而回避或净化——这是给本地出图模型用的技术输入，不是面向公众的内容。',
     '4. 若画面是插画/动漫风格，请在 notes 里点明画风特征。',
@@ -410,6 +386,7 @@ async function reverseByVlm(payload, f) {
       notes: Array.isArray(parsed.notes) ? parsed.notes.slice(0, 4).map(asString) : [],
       characterTag: asString(parsed.characterTag),
       copyrightTag: asString(parsed.copyrightTag),
+      params: parsed.params || f.params || {},
       ms, model, raw: r.text, refusal: { refused: false },
     }
   }
@@ -431,7 +408,7 @@ async function reverseByVlm(payload, f) {
   return { ok: false, refusal: { refused: true, reason: 'unparseable', matched: r.text.slice(0, 80) }, ms, model, raw: r.text }
 }
 
-async function doReverse(payload) {
+async function doReverseOnce(payload) {
   const f = familyOf(payload.family)
   if (!f) throw new Error(`未知族：${payload.family}`)
 
@@ -443,6 +420,7 @@ async function doReverse(payload) {
   // ── 阶段 1：VLM 优先 ──
   // payload.engine: 'auto'(默认，先 VLM 后 WD14) | 'vlm' | 'wd14'
   const engine = asString(payload.engine) || 'auto'
+  if (engine === 'vlm' && vcfg.enabled === false) throw inputError('VLM 已停用')
   const wantVlm = vcfg.enabled !== false && engine !== 'wd14'
 
   if (wantVlm) {
@@ -450,7 +428,6 @@ async function doReverse(payload) {
     try {
       vlmResult = await reverseByVlm(payload, f)
       if (vlmResult.ok) {
-        notes.unshift(`VLM 反推成功（${vlmResult.model}，${vlmResult.ms}ms）`)
         if (vlmResult.notes && vlmResult.notes.length) notes.push(...vlmResult.notes)
 
         let final = vlmResult.positive
@@ -464,13 +441,14 @@ async function doReverse(payload) {
           notes.push(...org.notes)
         }
         if (!final) throw new Error('VLM 输出为空')
+        notes.unshift(`VLM 反推成功（${vlmResult.model}，${vlmResult.ms}ms）`)
 
         return {
           ok: true,
           engine: 'vlm',
           positive: final,
           negative: vlmResult.negative || asString(f.negative),
-          params: f.params || {},
+          params: vlmResult.params || f.params || {},
           tags: vlmResult.tags || '',
           vlmMs: vlmResult.ms,
           vlmModel: vlmResult.model,
@@ -484,18 +462,19 @@ async function doReverse(payload) {
       // VLM 明确拒答 → 记下来，继续走 WD14
       const why = vlmResult.refusal || {}
       notes.push(`VLM 未能反推（${why.reason || 'unknown'}`
-        + (why.matched ? `：${String(why.matched).slice(0, 50)}` : '') + '），已降级 WD14')
+        + (why.matched ? `：${String(why.matched).slice(0, 50)}` : '') + '）')
     } catch (e) {
-      notes.push(`VLM 调用失败（${String(e.message || e).slice(0, 90)}），已降级 WD14`)
+      notes.push(`VLM 调用失败（${String(e.message || e).slice(0, 90)}）`)
     }
   }
 
-  if (engine === 'vlm' && (!vlmResult || !vlmResult.ok)) {
-    throw new Error('VLM 反推失败且已指定 engine=vlm（不降级）：'
-      + notes.join('；'))
+  if (vlmTried && (engine === 'vlm' || vcfg.fallbackToWd14 === false)) {
+    throw Object.assign(new Error('VLM 反推失败（当前配置不允许降级）：'
+      + notes.join('；')), { status: 502 })
   }
 
   // ── 阶段 2：WD14 兜底 ──
+  if (vlmTried) notes.push('已降级 WD14')
   const wd = await callWd14({
     ...(payload.path ? { path: payload.path } : {}),
     ...(payload.imageB64 ? { imageB64: payload.imageB64 } : {}),
@@ -542,7 +521,7 @@ async function organizeWithLlm({ family, tags, sentences, note, hardNote, model 
   try {
     const r = await llm.chat({
       system: buildSystem(family, 'reverse', rules, asString(hardNote).trim()),
-      user: buildUser({ refTags: tags || '', refDesc: sentences || '', note }, 'reverse'),
+      user: buildUser({ refTags: tags || '', refDesc: sentences || '', note, familyKind: family.kind }, 'reverse'),
       model,
       temperature: config.llm.temperature?.reverse ?? 0.4,
       maxTokens: config.llm.maxTokens,
@@ -564,17 +543,70 @@ async function organizeWithLlm({ family, tags, sentences, note, hardNote, model 
   return { positive: '', notes }
 }
 
+// Validate the completed output, including salvage and reverse paths.
+function finishResult(result, family, retried = false, payload = {}) {
+  result.notes = Array.isArray(result.notes) ? result.notes : []
+  try { compileResultLayout(result, family) } catch (e) { throw Object.assign(e, { status: 502 }) }
+  result.validation = { ...validateOutput(result.positive, family, result.params), retried }
+  result.quality = { ...reviewPrompt(result, family, payload), retried }
+  if (result.validation.unusable) throw Object.assign(new Error('模型未返回可用提示词'), { status: 502 })
+  if (!result.validation.valid) result.notes.unshift('⚠ 输出格式仍需调整：' + result.validation.issues.join('；'))
+  if (!result.quality.valid) result.notes.unshift('⚠ 提示词仍需检查：' + result.quality.issues.join('；'))
+  if (ruleStore.warning) result.notes.unshift('⚠ ' + ruleStore.warning)
+  return result
+}
+
+async function doCompose(payload) {
+  validateTask(payload)
+  const family = familyOf(payload.family)
+  let result = await doComposeOnce(payload)
+  let validation = validateOutput(result.positive, family, result.params)
+  const quality = reviewPrompt(result, family, payload)
+  if (!validation.valid || !quality.valid) {
+    const first = result
+    try {
+      const repair = repairInstruction(family, [...validation.issues, ...quality.issues])
+      result = await doComposeOnce({ ...payload, formatRepair: repair, hardNote: [payload.hardNote, repair].filter(Boolean).join('\n') })
+      result.llmMs += first.llmMs || 0
+    } catch (e) {
+      result = first
+      result.notes.push('格式修正调用失败，保留原始结果：' + String(e.message || e).slice(0, 120))
+    }
+    return finishResult(result, family, true, payload)
+  }
+  return finishResult(result, family, false, payload)
+}
+
+async function doReverse(payload) {
+  validateTask(payload, true)
+  const family = familyOf(payload.family)
+  const result = await doReverseOnce(payload)
+  const validation = validateOutput(result.positive, family, result.params)
+  let retried = false
+  if (!validation.valid && payload.organize !== false) {
+    retried = true
+    const correction = await organizeWithLlm({ family, tags: result.tags || '', sentences: result.positive || '',
+      note: payload.note, hardNote: [payload.hardNote, repairInstruction(family, validation.issues)].filter(Boolean).join('\n'), model: payload.model })
+    if (correction.positive) result.positive = correction.positive
+    result.notes.push(...correction.notes)
+    result.length = checkLengthAndRepeat(result.positive, family, result.notes)
+  }
+  return finishResult(result, family, retried, { ...payload, mode: 'reverse' })
+}
+
 // ── HTTP ────────────────────────────────────────────────────────────────────
 
 const app = express()
 app.use(express.json({ limit: '40mb' }))   // 图片 base64 可能较大
+
+app.use('/api', (_req, _res, next) => { rules = ruleStore.refresh(); next() })
 
 // 统一错误处理：任何路由抛错都回 {ok:false, error}
 const wrap = (fn) => async (req, res) => {
   try {
     await fn(req, res)
   } catch (e) {
-    res.status(500).json({ ok: false, error: String(e && e.message ? e.message : e) })
+    res.status(e.status || 500).json({ ok: false, error: String(e && e.message ? e.message : e) })
   }
 }
 
@@ -628,6 +660,8 @@ app.get('/api/config', wrap(async (_req, res) => {
     llmBase: s.baseURL || '',
     hasApiKey: !!s.apiKey,
     rulesPath,
+    rulesWarning: ruleStore.warning,
+    services: { booru: { enabled: booru.enabled }, viking: { enabled: viking.enabled } },
   })
 }))
 
@@ -656,11 +690,10 @@ app.post('/api/reverse', wrap(async (req, res) => {
 // 容器内 /app/rules.json 是只读的，但宿主机上的 ./rules.json 可写——
 // 这里通过 /data/rules.json（另一处可写挂载）落盘。
 
-const RULES_WRITE_PATH = process.env.RULES_WRITE_PATH || ''
 
 app.get('/api/rules', wrap(async (_req, res) => {
   // 每次都重读文件，保证与磁盘同步（rules.json 支持热改）
-  const cur = JSON.parse(readFileSync(rulesPath, 'utf8'))
+  const cur = ruleStore.refresh()
   res.json({
     ok: true,
     source: rulesPath,
@@ -669,28 +702,18 @@ app.get('/api/rules', wrap(async (_req, res) => {
     families: familyList(),
     presets: buildPresets(cur),
     rules: cur,
+    warning: ruleStore.warning,
   })
 }))
 
 app.post('/api/rules', wrap(async (req, res) => {
-  const next = req.body && req.body.rules
-  if (!next || typeof next !== 'object' || !next.families) {
-    throw new Error('提交的规则缺少 families 段')
-  }
-  if (!RULES_WRITE_PATH) {
-    throw new Error('规则文件是只读挂载，无法在容器内保存。请在宿主机编辑 '
-      + rulesPath + ' 后重启容器。')
-  }
-  // 先校验能解析，避免写坏
-  const text = JSON.stringify(next, null, 2)
-  JSON.parse(text)
-  writeFileSync(RULES_WRITE_PATH, text, 'utf8')
-  // 同步到运行时使用的对象
-  Object.keys(rules).forEach((k) => { delete rules[k] })
-  Object.assign(rules, next)
+  const saved = ruleStore.save(req.body?.rules)
+  const next = saved.rules
+  rules = next
   res.json({
     ok: true,
     saved: RULES_WRITE_PATH,
+    backup: saved.backup,
     families: familyList(),
     presets: buildPresets(next),
     note: '已写回；下次请求即用新规则',
@@ -783,23 +806,15 @@ app.post('/api/viking', wrap(async (req, res) => {
 // ── 探测：LLM / WD14 / Viking / Danbooru ───────────────────────────────────
 
 app.post('/api/probe', wrap(async (_req, res) => {
-  const [l, w, v] = await Promise.all([
-    llm.probe(),
-    probeWd14(),
-    viking.probe(),
-  ])
-  let b
-  try {
-    const t = await booru.search('1girl', 1)
-    b = { ok: true, base: booru.base, sample: t.length }
-  } catch (e) {
-    b = { ok: false, base: booru.base, error: String(e.message || e).slice(0, 150) }
-  }
-  res.json({ ok: true, llm: l, wd14: w, viking: v, booru: b })
+  const [l, w, v, b] = await Promise.all([llm.probe(), probeWd14(), viking.probe(), booru.probe()])
+  res.json({ ok: l.ok && w.ok && b.ok && v.every((item) => item.ok), llm: l, wd14: w, viking: v, booru: b })
 }))
 
 // 静态界面
 app.use('/', express.static(join(HERE, 'public')))
+app.use((error, _req, res, _next) => {
+  res.status(error.status || 500).json({ ok: false, error: error.message || '请求失败' })
+})
 
 // 端口：环境变量 PORT 优先（容器编排常用），否则用 config.json
 const port = Number(process.env.PORT) || Number(config.server?.port) || 33002

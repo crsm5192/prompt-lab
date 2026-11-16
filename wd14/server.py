@@ -29,11 +29,13 @@ import time
 import urllib.request
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 import numpy as np
 import onnxruntime as ort
 from PIL import Image
+from preprocess import prepare_image
 
 MODEL_DIR = os.environ.get("WD14_MODEL_DIR", "/models")
 MODEL_ONNX = os.path.join(MODEL_DIR, "model.onnx")
@@ -116,7 +118,11 @@ def ensure_loaded():
 def fetch_bytes(spec):
     """按 path / b64 / url 三种方式拿图片字节。"""
     if spec.path:
-        with open(spec.path, "rb") as f:
+        image_path = os.path.realpath(spec.path)
+        root = os.path.realpath(os.environ.get("WD14_IMAGES_DIR", "/images"))
+        if os.path.commonpath([image_path, root]) != root or image_path == root:
+            raise HTTPException(400, "图片路径必须在 /images/ 下")
+        with open(image_path, "rb") as f:
             return f.read()
     if spec.imageB64:
         b = spec.imageB64
@@ -141,8 +147,9 @@ class TagRequest(BaseModel):
 
 @app.get("/health")
 def health():
-    return {
-        "ok": True,
+    loaded = _state["session"] is not None
+    return JSONResponse(status_code=200 if loaded else 503, content={
+        "ok": loaded,
         "model": "wd14-swinv2",
         "loaded": _state["session"] is not None,
         "loadSeconds": _state["load_seconds"],
@@ -150,7 +157,7 @@ def health():
         "optLevel": OPT_LEVEL,
         "inputSize": INPUT_SIZE,
         "tagsAvailable": len(_state["tags"]),
-    }
+    })
 
 
 @app.post("/tags")
@@ -164,12 +171,7 @@ def tags(spec: TagRequest):
     except Exception as e:
         raise HTTPException(400, "图片解析失败：%s" % str(e)[:120])
     orig_size = list(img.size)
-    if img.mode != "RGB":
-        img = img.convert("RGB")
-    img = img.resize((INPUT_SIZE, INPUT_SIZE), Image.BICUBIC)
-
-    # onnx 内部自带归一化，输入用原始像素 0-255
-    arr = np.asarray(img, dtype=np.float32)[None, ...]
+    arr = prepare_image(img, INPUT_SIZE)
 
     t0 = time.time()
     preds = sess.run(None, {in_name: arr})[0][0]

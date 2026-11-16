@@ -13,7 +13,11 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: prompt-lab-wd14:latest
+      args:
+        VCS_REF: ${VCS_REF:-development}
+        APP_VERSION: ${APP_VERSION:-development}
+        PYTHON_PACKAGE_INDEX: ${PYTHON_PACKAGE_INDEX:-https://pypi.org/simple}
+    image: prompt-lab-wd14:${APP_VERSION:-latest}
     restart: unless-stopped
     ports:
       - "0.0.0.0:33001:8199"
@@ -29,7 +33,7 @@ services:
       - ./data/models/wd14:/models:ro
       # 图片目录：反推时可按 NAS 路径直接读（避免大图 base64 过 HTTP）
       # 本地图片目录（按需改路径）
-      - ./images:/images:ro
+      - ../images:/images:ro
     environment:
       - TZ=Asia/Shanghai
       - WD14_MODEL_DIR=/models

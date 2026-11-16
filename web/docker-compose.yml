@@ -17,7 +17,10 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: prompt-lab-web:latest
+      args:
+        VCS_REF: ${VCS_REF:-development}
+        APP_VERSION: ${APP_VERSION:-development}
+    image: prompt-lab-web:${APP_VERSION:-latest}
     restart: unless-stopped
     ports:
       - "0.0.0.0:33002:33002"
@@ -38,7 +41,7 @@ services:
       - ./data:/data-settings
       # 图片目录（反推时可按 NAS 路径读）
       # 本地图片目录（按需改路径；反推时可按容器内路径读图）
-      - ./images:/images:ro
+      - ../images:/images:ro
     environment:
       - TZ=Asia/Shanghai
       # LLM 密钥：可以在这里注入（优先级最高），也可以启动后在界面「设置」里填。

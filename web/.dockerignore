@@ -1,0 +1,9 @@
+node_modules/
+data/
+images/
+.env*
+*.log
+*.err
+test-*.mjs
+**/*.bak
+**/*.tmp

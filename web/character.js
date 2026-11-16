@@ -68,7 +68,7 @@ export async function searchCharacter(deps, payload) {
 
   // ── 2. OpenViking 语义检索（找相关资源）──
   let refs = []
-  if (viking && payload.withText !== false) {
+  if (viking && viking.enabled !== false && payload.withText !== false) {
     const r = await viking.find({
       query,
       limit: Number(payload.limit) || 5,

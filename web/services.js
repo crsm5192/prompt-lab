@@ -13,10 +13,12 @@
  */
 import { request } from 'node:http'
 import { request as httpsRequest } from 'node:https'
+import { HttpsProxyAgent } from 'https-proxy-agent'
 
 /** 极简 JSON HTTP 客户端（支持超时与自定义头）。 */
 export function fetchJson(url, opts = {}) {
   const u = new URL(url)
+  if (!['http:', 'https:'].includes(u.protocol)) throw new Error('服务地址必须使用 http 或 https')
   const isHttps = u.protocol === 'https:'
   const lib = isHttps ? httpsRequest : request
   const body = opts.body === undefined ? null : Buffer.from(
@@ -28,6 +30,7 @@ export function fetchJson(url, opts = {}) {
       port: Number(u.port) || (isHttps ? 443 : 80),
       path: u.pathname + u.search,
       method: opts.method || (body ? 'POST' : 'GET'),
+      ...(opts.proxy ? { agent: new HttpsProxyAgent(opts.proxy) } : {}),
       headers: {
         ...(body ? { 'Content-Type': 'application/json', 'Content-Length': body.length } : {}),
         ...(opts.headers || {}),
@@ -60,6 +63,7 @@ export function fetchJson(url, opts = {}) {
 // ── OpenViking（Viking 检索 / 角色库）──────────────────────────────────────
 
 export function createViking(config) {
+  const enabled = config?.enabled !== false
   const instances = (config && config.instances) || []
   const apiKey = process.env[(config && config.apiKeyEnv) || 'OPENVIKING_API_KEY'] || ''
 
@@ -75,7 +79,7 @@ export function createViking(config) {
     return fetchJson(base + path, {
       method: 'POST',
       body,
-      timeoutMs: timeoutMs || 60000,
+      timeoutMs: timeoutMs || config?.timeoutMs || 60000,
       headers: apiKey ? { Authorization: `Bearer ${apiKey}`, 'X-API-Key': apiKey } : {},
     })
   }
@@ -85,6 +89,7 @@ export function createViking(config) {
    * 对应本机插件的 doVikingSearch。
    */
   async function find(opts) {
+    if (!enabled) return { ok: true, disabled: true, refs: [], total: 0, errors: [], note: 'OpenViking 已停用' }
     const query = String(opts.query || '').trim()
     if (!query) throw new Error('没有可检索的内容')
     const instance = opts.instance || (config && config.active) || 'compliance'
@@ -140,6 +145,7 @@ export function createViking(config) {
 
   /** 探测各实例可用性。 */
   async function probe() {
+    if (!enabled) return instances.map((i) => ({ name: i.name, base: i.baseURL, ok: true, disabled: true }))
     const out = []
     for (const inst of instances) {
       const base = String(inst.baseURL || '').replace(/\/+$/, '')
@@ -153,13 +159,14 @@ export function createViking(config) {
     return out
   }
 
-  return { find, probe, baseOf, hasKey: !!apiKey }
+  return { find, probe, baseOf, hasKey: !!apiKey, enabled }
 }
 
 // ── Danbooru（标签详情）────────────────────────────────────────────────────
 
 export function createBooru(config) {
   const cfg = config || {}
+  const enabled = cfg.enabled !== false
   const base = String(cfg.baseURL || 'https://danbooru.donmai.us').replace(/\/+$/, '')
   const ua = cfg.userAgent || 'prompt-lab-nas/1.0'
   const timeout = Number(cfg.timeoutSeconds) * 1000 || 30000
@@ -174,13 +181,14 @@ export function createBooru(config) {
   }
 
   async function get(url) {
-    const r = await fetchJson(url, { headers: { 'User-Agent': ua }, timeoutMs: timeout })
+    const r = await fetchJson(url, { headers: { 'User-Agent': ua }, timeoutMs: timeout, proxy: cfg.proxy })
     if (r._raw !== undefined) throw new Error('Danbooru 返回非 JSON')
     return r
   }
 
   /** 标签搜索（按名字前缀，按热度排序）。 */
   async function search(qstr, limit) {
+    if (!enabled) return []
     const arr = await get(q(`/tags.json`, {
       'search[name_matches]': `${qstr}*`,
       'search[order]': 'count',
@@ -196,6 +204,7 @@ export function createBooru(config) {
 
   /** 精确核验一个标签（角色锚点用）。 */
   async function verify(names) {
+    if (!enabled) return []
     const list = (Array.isArray(names) ? names : [names]).filter(Boolean)
     if (!list.length) return []
     const arr = await get(q(`/tags.json`, {
@@ -211,6 +220,7 @@ export function createBooru(config) {
 
   /** 标签 Wiki 简介。 */
   async function wiki(name) {
+    if (!enabled) return { ok: false, disabled: true, name, body: '', error: 'Danbooru 已停用' }
     const arr = await get(q(`/wiki_pages.json`, {
       'search[title]': name,
       limit: 1,
@@ -225,6 +235,7 @@ export function createBooru(config) {
 
   /** 相关标签（同图共现）。 */
   async function related(name, limit) {
+    if (!enabled) return []
     const arr = await get(q(`/related_tag.json`, {
       query: name, limit: limit || 16,
     }))
@@ -247,6 +258,7 @@ export function createBooru(config) {
    * 所以优先 sample，其次原图，最后 preview。
    */
   async function posts(tags, limit, ratings) {
+    if (!enabled) return []
     const params = {
       tags: tags + (ratings ? ` rating:${ratings}` : ''),
       limit: limit || 8,
@@ -270,5 +282,10 @@ export function createBooru(config) {
     })
   }
 
-  return { search, verify, wiki, related, posts, base }
+  async function probe() {
+    if (!enabled) return { ok: true, disabled: true, base }
+    try { return { ok: true, base, sample: (await search('1girl', 1)).length } }
+    catch (e) { return { ok: false, base, error: String(e.message || e).slice(0, 150) } }
+  }
+  return { search, verify, wiki, related, posts, probe, base, enabled }
 }

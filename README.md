@@ -67,6 +67,8 @@
 
 族的定义在 `web/rules.json`，共用的写作纪律在 `sharedBlocks` 里复用。
 
+生成与润色默认进行艺术构图：围绕主体安排焦点、留白、动作线、明暗大形、色彩和材质。界面可选择自动、保留已有构图、偏置留白、对角动势、框景层次或几何节奏。动作描述重点说明可见手脚的归属、承重与物体接触，保持指定动作和机位。反推忠实还原原图，局部迭代只改反馈要求。规则减少提示词歧义；实际人体和画面质量仍需在目标出图模型、工作流和种子下验证。
+
 ### MOSS-Image 的 Layout 编译
 
 MOSS-Image 支持用边界框控制画面元素位置。官方规范里模型吃的是
@@ -219,13 +221,13 @@ curl -s 'http://127.0.0.1:33002/api/tags?q=long%20hair&limit=10'
 
 ### 关键设计
 
-**规则引擎是纯函数。** `engine.js` 不碰网络、不碰文件，输入族规则 + 用户参数，输出提示词文本。所以它可以脱离服务单测——`test-engine.mjs` 52 项断言全跑在纯函数上。
+**规则引擎是纯函数。** `engine.js` 不碰网络、不碰文件，输入族规则 + 用户参数，输出提示词文本。所以它可以脱离服务单测——`test-engine.mjs` 61 项断言全跑在纯函数上。
 
 **后处理是确定性的，不靠模型自觉。** 模型被反复要求「不要写质量词」仍会漏回来，所以有一层 `stripQualityAndSafety()` 硬清除（含 `(masterpiece:1.2)`、`score_9` 这类写法）。同理，族不允许的语法（画师标签、`BREAK`、下划线）也在后处理里强制清掉。
 
 **反推做成显式状态机，而不是一次 try。** VLM 成功就直接返回；明确拒答（含软回避）就降级 WD14 并把拒答原因写进备注；`engine=vlm` 时则不降级、直接报错——让你知道是模型不行还是图不行。
 
-**只告警不改写。** 形态校验（如「这一版缺自然语言段」）只提出问题，不擅自重写用户的创作意图。
+**输出格式验收。** 生成、润色、迭代和反推都检查空值、占位内容和族的书写形态。不合规时最多补一次格式修正；仍不合规会在 `validation` 和备注里明确告警。关闭反推整理时不额外调用模型。修正保留用户指定的画面内容。
 
 ### 测试
 
@@ -235,10 +237,11 @@ node test-engine.mjs    # 规则引擎：JSON 宽容解析、格式清洗、长�
 node test-layout.mjs    # Layout 编译器：官方换算向量、边界校验
 node test-refusal.mjs   # 拒答检测：强拒答 / 软回避 / 正常输出
 node test-settings.mjs  # 设置：优先级、密钥不回显、原子写入
-node test-services.mjs  # 外部服务客户端（需网络）
+npm test               # 上述核心测试 + 本地 HTTP/规则/代理/前端集成回归
+node test-services.mjs  # 外部服务客户端（需实际配置和网络）
 ```
 
-前三个不需要网络。
+核心与集成回归不调用外部模型；集成测试使用本地模拟服务。图像预处理回归在 `wd14` 目录执行 `python -m unittest test_preprocess.py`，需要 Pillow 和 NumPy。GitHub Actions 会运行 Web 与图像输入测试。
 
 ---
 
@@ -255,10 +258,10 @@ node test-services.mjs  # 外部服务客户端（需网络）
 ```bash
 git clone <your-repo-url> prompt-lab
 cd prompt-lab
-cp .env.example .env
+cp .env.example web/.env
 ```
 
-`.env` 可以留空——**启动后在界面「设置」页配更简单**（见上一节）。
+`web/.env` 可以留空——**启动后在界面「设置」页配更简单**（见上一节）。
 
 如果偏好环境变量方式，填这两行：
 
@@ -276,17 +279,17 @@ WD14 需要一个 ONNX 模型和标签表，放到 `wd14/data/models/wd14/`：
 ```
 wd14/data/models/wd14/
 ├── model.onnx          # WD14 标签分类器（约 446MB）
-├── selected_tags.csv   # 标签表
-└── config.json
+└── selected_tags.csv   # 标签表
 ```
 
-模型可从 [SmilingWolf/wd-v1-4-moat-tagger-v2](https://huggingface.co/SmilingWolf/wd-v1-4-moat-tagger-v2) 等来源获取。
+模型可从 [SmilingWolf/wd-swinv2-tagger-v3](https://huggingface.co/SmilingWolf/wd-swinv2-tagger-v3) 获取。本项目按官方流程处理输入：透明图合成白底、居中补方形、缩放到 448、RGB 转 BGR；不要直接拉伸长方形图。
 
 > 体积较大，已在 `.gitignore` 中排除，不入库。
 
 ### 3. 启动
 
 ```bash
+mkdir -p images
 cd wd14 && docker compose up -d --build
 cd ../web && docker compose up -d --build
 ```
@@ -309,6 +312,16 @@ docker compose up -d --build
 ```
 
 只 `restart` 不生效——这个坑很容易踩。
+
+---
+
+## NAS 更新与回滚
+
+Windows 上运行 `ops/deploy-nas.ps1` 可同步代码、构建并验证 NAS。它保留 NAS 的 config、规则、密钥、运行时数据和模型文件，记录发布指纹、旧镜像和恢复脚本。操作方法见 [ops/README.md](ops/README.md)。
+
+Web 和 WD14 都把项目根目录 `images/` 挂到容器 `/images`。按路径反推统一使用 `/images/文件名`；上传 base64 仍受支持。
+
+基础镜像按版本和 amd64 摘要固定，Web 使用 lockfile 与 `npm ci`。`APP_VERSION` 控制版本镜像标签，`VCS_REF` 写入镜像 revision；默认构建保留 development 标识。
 
 ---
 
@@ -360,10 +373,9 @@ WD14 的价值不在精度，而在**它不会拒答**：它本身就是 Danboor
 1. **无 GPU 时的反推质量**：WD14 只出标签，自然语言描述依赖后续 LLM 整理。
 2. **OpenViking 检索是可选的**：不配也能用，只是角色库少一层语义召回。
 3. **前端无构建链**：单文件 index.html，功能变多后维护性会下降。
-4. **规则页保存需要可写挂载**：默认只读，要保存需配 `RULES_WRITE_PATH`。
-5. **设置页无鉴权**：服务本身不内置登录，暴露到公网前请自行加反代鉴权。
-6. **提示词长度有实测上限**：anima/krea2 建议 440 token（约 300 词）以内、硬上限 580；
-   noobai/generic 是 77 token 的 CLIP 硬分块（超出静默丢弃）。超出会告警但不自动裁剪。
+4. **规则更新**：Compose 已配置可写路径；保存先校验结构并备份，宿主机编辑和界面保存都会热更新。坏文件保留上次有效规则，重启时可用备份恢复。
+5. **无需登录**：当前服务按内网使用方式开放，设置页和业务接口不设登录。临时查询其他 API 地址时不自动复用已有密钥。
+6. **长度是估算和经验告警**：Anima 为 300/380 token，Krea 2 为 440/580；NoobAI/通用为 75/77。超出会告警，不自动裁剪。真实 token 和分块/截断行为由实际出图编码节点决定。
    详见下节。
 
 ---
@@ -398,16 +410,25 @@ Anima 用 Qwen 系编码器，**不做硬截断**（`max_length` 实际是 99999
 
 ### 落地的阈值
 
-| 族 | 建议上限 | 硬上限 | 说明 |
+| 族 | 建议阈值 | 超限告警阈值 | 说明 |
 |---|---|---|---|
-| anima / krea2 | 440 token（≈300 词） | 580 token（≈400 词） | Qwen 编码器，无硬截断 |
-| noobai / generic | 75 token | 77 token | SDXL CLIP 硬分块，超出静默丢弃 |
+| anima | 300 token（≈207 词） | 380 token（≈262 词） | 当前 Anima 经验阈值 |
+| krea2 | 440 token（≈303 词） | 580 token（≈400 词） | 当前 Krea 2 经验阈值 |
+| noobai / generic | 75 token | 77 token | 分块或截断由具体编码节点决定 |
 | moss | 1200 token | 2000 token | 官方条件上限 4096 |
 
-超限会在结果区显示告警（含具体 token 数与建议），**不自动裁剪**——
+超限会在结果区显示告警（含估算 token 数与建议），**不自动裁剪**——
 裁掉内容会破坏画面语义，宁可提示让你自己决定。
 
 `measureLength()` 同时统计**重复度**：某句重复 ≥3 次或近似重复 ≥30% 时也会告警。
+
+### Anima / MOSS 的自动生成优化
+
+选择模型族后自动应用对应策略，无需另加增强关键词。Anima 用短标签前置主体与关键动作，2–3 句正文补接触、姿态、构图和光色；常规生成优先约 180–240 token，复杂明确设定保留至约 300。MOSS 默认普通英文画面描述，主体和动作接触在前，空间布局随后，媒介与材质在后；常规描述优先约 180–280 token，明确标签需求或精确排版需求分别走 tag / Layout。
+
+生成和润色新增一次文本检查：重复句/标签、简洁目标（Anima 300、普通 MOSS 360 token）、单人景别或腾空/接地冲突，以及误伤合法媒介的负面词。发现问题时与格式检查共用一次修正调用，保留指定内容，不直接截断。持续问题显示在 notes；接口 `quality` 返回检查结果，与 `validation` 的格式检查分开。这些简洁目标属于生成器策略，MOSS 的原有长度告警阈值和模型条件上限继续适用。
+
+局部迭代与忠实反推不因长度目标自动缩减内容。引号内的画内文字、多人/分格中的不同景别、用户明确排除的画风及已有负面词受到保护。文本检查不能判断实际出图中的手指数量、头颈完整性或 LoRA 效果；生成器不会修改 ComfyUI 工作流或推断未知 LoRA 设置。
 
 ---
 

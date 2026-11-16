@@ -176,6 +176,20 @@
       </div>
 
       <div class="card">
+        <h3>画面设计</h3>
+        <label>构图偏好</label>
+        <select id="composition">
+          <option value="auto">自动艺术构图</option>
+          <option value="preserve">保留已有构图</option>
+          <option value="negative_space">偏置与留白</option>
+          <option value="diagonal">对角线与动势</option>
+          <option value="framing">框景与空间层次</option>
+          <option value="geometric">几何秩序与节奏</option>
+        </select>
+        <div class="hint" style="margin-top:6px">生成与润色按题材设计焦点、光色和材质。明确的动作、机位与画幅优先；反推保留原图，迭代按反馈修改。</div>
+      </div>
+
+      <div class="card">
         <h3>高级</h3>
         <label>文本模型</label>
         <div style="display:flex;gap:6px;align-items:center">
@@ -213,7 +227,7 @@
       <div class="card" id="card-gen">
         <h3>① 生成</h3>
         <label>需求描述</label>
-        <textarea id="brief" placeholder="例：雨夜霓虹街头，少女撑伞回头，电影感"></textarea>
+        <textarea id="brief" placeholder="例：成年女性画家坐在画室，左手托调色板、右手握画笔，侧面窗光，水彩插画，偏置留白构图"></textarea>
         <label>基底词 / 触发词（可选）</label>
         <input id="base" placeholder="例：my_oc, blue dress">
         <div class="row">
@@ -409,7 +423,7 @@ const state = {
 async function api(path, opts) {
   const res = await fetch(ROUTE + path, opts);
   const j = await res.json().catch(() => ({}));
-  if (!j.ok) throw new Error(j.error || ('HTTP ' + res.status));
+  if (!res.ok || (!j.ok && path !== '/probe')) throw new Error(j.error || ('HTTP ' + res.status));
   return j;
 }
 const post = (path, body) => api(path, {
@@ -474,7 +488,7 @@ function renderFams() {
   state.families.forEach((f) => {
     const b = document.createElement('button');
     b.className = 'fam' + (state.family === f.id ? ' on' : '');
-    b.innerHTML = f.label + '<small>' + (f.kind || '') + '</small>';
+    b.innerHTML = escapeHtml(f.label) + '<small>' + escapeHtml(f.kind || '') + '</small>';
     b.onclick = () => { state.family = f.id; renderFams(); };
     box.appendChild(b);
   });
@@ -483,6 +497,7 @@ function renderFams() {
 // ── 页签 ───────────────────────────────────────────────────────────────────
 function setTab(tab) {
   state.tab = tab;
+  $('composition').disabled = !['gen', 'refine'].includes(tab);
   document.querySelectorAll('.tab').forEach((t) => {
     t.classList.toggle('on', t.dataset.tab === tab);
   });
@@ -731,7 +746,7 @@ function renderResult(r) {
   $('outPos').value = r.positive || '';
   $('outNeg').value = r.negative || '';
 
-  // 字数只做信息展示，不限、不告警（用户要求去掉提示词数量限制）
+  // 长度为估算值；具体格式和长度告警显示在 notes 中，不自动裁剪
   const len = r.length;
   const el = $('outLen');
   if (len && len.words) {
@@ -741,18 +756,20 @@ function renderResult(r) {
 
   const p = r.params || {};
   $('outKv').innerHTML = [
-    'steps <b>' + (p.steps || '-') + '</b>',
-    'cfg <b>' + (p.cfg || '-') + '</b>',
-    p.sampler ? 'sampler <b>' + p.sampler + '</b>' : '',
-    '尺寸 <b>' + (p.size || '-') + '</b>',
-    r.familyLabel ? '族 <b>' + r.familyLabel + '</b>' : '',
-    r.model ? '模型 <b>' + r.model + '</b>' : '',
+    'steps <b>' + escapeHtml(p.steps || '-') + '</b>',
+    'cfg <b>' + escapeHtml(p.cfg || '-') + '</b>',
+    p.sampler ? 'sampler <b>' + escapeHtml(p.sampler) + '</b>' : '',
+    p.shift ? 'shift <b>' + escapeHtml(p.shift) + '</b>' : '',
+    p.slg ? 'SLG <b>' + escapeHtml(p.slg) + '</b>' : '',
+    '尺寸 <b>' + escapeHtml(p.size || '-') + '</b>',
+    r.familyLabel ? '族 <b>' + escapeHtml(r.familyLabel) + '</b>' : '',
+    r.model ? '模型 <b>' + escapeHtml(r.model) + '</b>' : '',
     r.wd14Ms ? 'WD14 <b>' + r.wd14Ms + 'ms</b>' : '',
-    r.rating ? '安全档 <b>' + r.rating + '</b>' : '',
+    r.rating ? '安全档 <b>' + escapeHtml(r.rating) + '</b>' : '',
   ].filter(Boolean).join('');
 
   const notes = r.notes || [];
-  $('outNotes').innerHTML = notes.map((n) => '<li>' + String(n) + '</li>').join('');
+  $('outNotes').innerHTML = notes.map((n) => '<li>' + escapeHtml(n) + '</li>').join('');
 }
 
 // ── 动作 ───────────────────────────────────────────────────────────────────
@@ -764,12 +781,14 @@ async function run(kind) {
       r = await post('/compose', {
         mode: 'gen', family: state.family,
         brief: $('brief').value, base: $('base').value,
+        composition: $('composition').value,
         model: $('model').value, hardNote: $('hardNote').value,
       });
     } else if (kind === 'refine') {
       r = await post('/compose', {
         mode: 'refine', family: state.family,
         source: $('source').value, base: $('refBase').value,
+        composition: $('composition').value,
         model: $('model').value, hardNote: $('hardNote').value,
       });
     } else if (kind === 'iterate') {
@@ -795,7 +814,7 @@ async function run(kind) {
     setStatus('完成', 'ok');
   } catch (e) {
     setStatus('失败', 'err');
-    $('outNotes').innerHTML = '<li style="color:var(--err)">' + String(e.message || e) + '</li>';
+    $('outNotes').innerHTML = '<li style="color:var(--err)">' + escapeHtml(String(e.message || e)) + '</li>';
     if (kind === 'reverse') $('revEngine').innerHTML = '<span style="color:var(--err)">反推失败</span>';
   } finally {
     busy(false);
@@ -835,11 +854,11 @@ $('probe').onclick = async () => {
     const l = r.llm || {}, w = r.wd14 || {};
     $('probeOut').innerHTML =
       '<div class="note ' + (l.ok ? 'ok' : 'err') + '">LLM：' +
-      (l.ok ? '可用（' + l.base + '，' + (l.available || 0) + ' 个模型）' : '不可用 — ' + (l.error || '?')) + '</div>' +
+      (l.ok ? '可用（' + escapeHtml(l.base) + '，' + (l.available || 0) + ' 个模型）' : '不可用 — ' + escapeHtml(l.error || '?')) + '</div>' +
       '<div class="note ' + (w.ok ? 'ok' : 'err') + '">WD14：' +
-      (w.ok ? '可用（' + (w.model || '') + '，' + (w.loaded ? '模型已加载' : '未加载') + '）' : '不可用 — ' + (w.error || '?')) + '</div>';
+      (w.ok ? '可用（' + escapeHtml(w.model || '') + '，' + (w.loaded ? '模型已加载' : '未加载') + '）' : '不可用 — ' + escapeHtml(w.error || '?')) + '</div>';
   } catch (e) {
-    $('probeOut').innerHTML = '<div class="note err">' + e.message + '</div>';
+    $('probeOut').innerHTML = '<div class="note err">' + escapeHtml(e.message) + '</div>';
   }
 };
 
@@ -849,7 +868,7 @@ const CAT_LABEL = {
 };
 let tagState = { name: '', tab: 'wiki' };
 
-function catClass(cat) { return 'cat-' + (cat || 'general'); }
+function catClass(cat) { return 'cat-' + (Object.hasOwn(CAT_LABEL, cat) ? cat : 'general'); }
 
 function renderTagList(list) {
   const box = $('tagResults');
@@ -863,9 +882,9 @@ function renderTagList(list) {
   list.forEach((t) => {
     const b = document.createElement('button');
     b.className = 'tagrow';
-    b.innerHTML = '<span class="tn">' + t.name + '</span>'
-      + '<span class="tc ' + catClass(t.category) + '">' + (CAT_LABEL[t.category] || t.category) + '</span>'
-      + '<span class="tc">' + (t.postCount || 0).toLocaleString() + ' 帖</span>';
+    b.innerHTML = '<span class="tn">' + escapeHtml(t.name) + '</span>'
+      + '<span class="tc ' + catClass(t.category) + '">' + escapeHtml(CAT_LABEL[t.category] || t.category) + '</span>'
+      + '<span class="tc">' + Number(t.postCount || 0).toLocaleString() + ' 帖</span>';
     b.onclick = () => openTag(t.name, t.category, t.postCount);
     wrap.appendChild(b);
   });
@@ -883,7 +902,7 @@ async function onTagSearch() {
     const exact = (r.tags || []).find((t) => t.name === q.toLowerCase().replace(/\s+/g, '_'));
     if (exact) openTag(exact.name, exact.category, exact.postCount);
   } catch (e) {
-    $('tagResults').innerHTML = '<div class="note err">' + e.message + '</div>';
+    $('tagResults').innerHTML = '<div class="note err">' + escapeHtml(e.message) + '</div>';
   }
 }
 
@@ -912,7 +931,7 @@ async function loadTagPane(kind) {
       const r = await post('/tag', { op: 'wiki', name: tagState.name });
       pane.innerHTML = r.ok
         ? '<div class="wiki">' + escapeHtml(r.body || '(无内容)') + '</div>'
-        : '<div class="hint">' + (r.error || '无 wiki') + '</div>';
+        : '<div class="hint">' + escapeHtml(r.error || '无 wiki') + '</div>';
     } else if (kind === 'related') {
       const r = await post('/tag', { op: 'related', name: tagState.name, limit: 18 });
       const list = r.tags || [];
@@ -921,7 +940,7 @@ async function loadTagPane(kind) {
       pane.innerHTML = '<div class="hint" style="margin-bottom:6px">单击查看，右键复制</div>'
         + '<div class="chips">' + list.map((t) =>
           '<button class="chip" data-rel="' + escapeAttr(t.name) + '" title="单击查看 / 右键复制">'
-          + t.name + '</button>').join('') + '</div>';
+          + escapeHtml(t.name) + '</button>').join('') + '</div>';
       pane.querySelectorAll('[data-rel]').forEach((b) => {
         b.onclick = () => { $('tagQ').value = b.dataset.rel; openTag(b.dataset.rel, '', 0); };
         b.oncontextmenu = (e) => {
@@ -936,14 +955,14 @@ async function loadTagPane(kind) {
       pane.innerHTML = '<div class="grid">' + list.map((p) =>
         '<figure><img loading="lazy" src="/api/thumb?u=' + encodeURIComponent(p.large || p.preview)
         + '" data-full="' + encodeURIComponent(p.original || p.large || p.preview)
-        + '" alt="' + p.id + '"><figcaption>' + (p.score ?? '') + '</figcaption></figure>').join('') + '</div>';
+        + '" alt="' + escapeAttr(p.id) + '"><figcaption>' + escapeHtml(p.score ?? '') + '</figcaption></figure>').join('') + '</div>';
       // 点击看原图
       pane.querySelectorAll('figure img').forEach((img) => {
         img.onclick = () => window.open('/api/thumb?u=' + img.dataset.full, '_blank');
       });
     }
   } catch (e) {
-    pane.innerHTML = '<div class="note err">' + e.message + '</div>';
+    pane.innerHTML = '<div class="note err">' + escapeHtml(e.message) + '</div>';
   }
 }
 
@@ -984,9 +1003,9 @@ async function onCharSearch() {
     if (r.suggested) {
       const d = document.createElement('div');
       d.className = 'note ok';
-      d.innerHTML = '推荐写法：<b class="mono">' + r.suggested + '</b>'
+      d.innerHTML = '推荐写法：<b class="mono">' + escapeHtml(r.suggested) + '</b>'
         + (r.normalized && r.normalized !== r.suggested
-          ? ' <span class="hint">（输入 ' + r.normalized + '）</span>' : '');
+          ? ' <span class="hint">（输入 ' + escapeHtml(r.normalized) + '）</span>' : '');
       box.appendChild(d);
     }
 
@@ -1014,8 +1033,8 @@ async function onCharSearch() {
       list.forEach((x) => {
         const b = document.createElement('button');
         b.className = 'tagrow';
-        b.innerHTML = '<span class="tn">' + x.name + '</span>'
-          + '<span class="tc">' + (x.postCount || 0).toLocaleString() + ' 帖</span>';
+        b.innerHTML = '<span class="tn">' + escapeHtml(x.name) + '</span>'
+          + '<span class="tc">' + Number(x.postCount || 0).toLocaleString() + ' 帖</span>';
         b.onclick = () => {
           $('tagQ').value = x.name;
           setTab('tags');
@@ -1046,7 +1065,7 @@ async function onCharSearch() {
       box.innerHTML += '<div class="hint" style="margin-top:10px">没有找到结果</div>';
     }
   } catch (e) {
-    box.innerHTML = '<div class="note err">' + e.message + '</div>';
+    box.innerHTML = '<div class="note err">' + escapeHtml(e.message) + '</div>';
   }
 }
 
@@ -1065,9 +1084,10 @@ async function loadRules() {
     $('rulesMsg').innerHTML = r.writable
       ? '<div class="note ok">可保存（写入 ' + escapeHtml(r.writeTarget || '') + '）</div>'
       : '<div class="note warn">只读挂载：' + escapeHtml(r.writeTarget || '') + '</div>';
+    if (r.warning) $('rulesMsg').innerHTML += '<div class="note warn">' + escapeHtml(r.warning) + '</div>';
     $('saveRules').disabled = !r.writable;
   } catch (e) {
-    $('presetView').innerHTML = '<div class="note err">' + e.message + '</div>';
+    $('presetView').innerHTML = '<div class="note err">' + escapeHtml(e.message) + '</div>';
   }
 }
 
@@ -1371,7 +1391,7 @@ async function initFams() {
     setStatus('就绪', 'ok');
   } catch (e) {
     setStatus('配置加载失败', 'err');
-    $('outNotes').innerHTML = '<li style="color:var(--err)">' + e.message + '</li>';
+    $('outNotes').innerHTML = '<li style="color:var(--err)">' + escapeHtml(e.message) + '</li>';
   }
 })();
 

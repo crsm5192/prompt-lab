@@ -12,6 +12,8 @@
  * 所以两边产出的提示词风格一致。
  */
 
+import { qualityDirection } from './art-direction.js'
+
 // ── 基础工具 ────────────────────────────────────────────────────────────────
 
 export const asString = (v) => (v === undefined || v === null ? '' : String(v))
@@ -314,7 +316,7 @@ export function measureLength(text, family, rules) {
   //（兜底路径），那种情况正需要长度告警，不能放过。
   const isLayoutJson = kind === 'NL+layout' && s.trim().startsWith('{')
 
-  // tag 族正负共享 77 token 窗口，正文本身要留出负面词的空间
+  // 这是应用的经验告警阈值；正负分别编码，具体分块行为由出图节点决定
   const target = lim.target
   const hard = lim.hard
 
@@ -553,7 +555,7 @@ const KIND_TEXT = {
 
 const STYLE_LABEL = {
   faithful: '忠实还原（反推）',
-  epic: '震撼美化（润色 / 生成）',
+  epic: '艺术增强（润色 / 生成）',
 }
 
 /** 按任务模式选风格档（反推用忠实还原，生成/润色用震撼美化）。 */
@@ -572,7 +574,7 @@ export function styleFor(family, mode) {
 export function buildSystem(family, mode, rules, extraNote) {
   const f = family || {}
   const lines = [
-    '你是一位资深 AI 绘图提示词工程师，服务对象是本地 ComfyUI / 独立出图工作流。',
+    '你是一位视觉设计师与 AI 绘图提示词工程师，服务对象是本地 ComfyUI / 独立出图工作流。',
     `目标模型族：${asString(f.label)}（提示词范式：${KIND_TEXT[asString(f.kind)] || '标签流'}）`,
     '',
     '【输出方式（全程有效，优先级最高）】你的回复必须且只能是一个 JSON 对象：'
@@ -616,7 +618,7 @@ export function buildSystem(family, mode, rules, extraNote) {
   lines.push('')
 
   if (mode === 'refine') {
-    lines.push('本次任务【润色改写】：保留用户原意与已指定的角色/触发词，只修正格式、顺序、权重与跨族污染，使其完全符合目标模型族规范。')
+    lines.push('本次任务【润色改写】：保留用户原意、角色、触发词和明确的视觉要求；修正格式与跨族污染，澄清动作接触关系，并在尚未指定的构图、光色和材质维度提升完成度。')
     lines.push('特别地：若发现不属于该族的词（例如把 NoobAI 的 very awa / worst aesthetic / 下划线写法带进 Anima），必须删改，并在 notes 中说明改了什么。')
     lines.push('【禁止加质量词与安全标签】润色时不要把 masterpiece / best quality / highres / score_* '
       + '或 safe / nsfw 加回正面——这是本工作台的硬性规定，加了就是错。')
@@ -671,6 +673,17 @@ export function buildSystem(family, mode, rules, extraNote) {
   return lines.join('\n')
 }
 
+/** Layout 结构放入用户消息，避免上游模型忽略长系统提示后自创 schema。 */
+export function layoutInstruction() {
+  return '【MOSS Layout 结构验收】需要 Layout 时，positive 放单行草稿 JSON 字符串；'
+    + '根字段只能为 width、height、bbox_coord_space="abs"、bbox_format="xyxy"、summary、items。'
+    + 'summary 必须包含 caption（英文全局描述），可含 meta（字符串数组）、canvas（single/multi_panel/collage）、palette（字符串数组）。'
+    + 'items 是非空扁平数组，每项必须有 label（object/character/text）、caption（英文可见内容）、bbox（实际像素 [x1,y1,x2,y2]）；'
+    + '可含 text、tags、palette；label=text 时 text 必填。不要使用 type、elements、children 或 background 字段。'
+    + 'width/height 用用户指定的画布尺寸，params.size 写为 WIDTHxHEIGHT；坐标换算交给工具。'
+    + '用户需要普通 caption 或 tag 串时保持该形态，不强制转成 Layout。'
+}
+
 /** 拼装用户消息。 */
 export function buildUser(args, mode) {
   const parts = []
@@ -705,10 +718,20 @@ export function buildUser(args, mode) {
     if (asString(args.base).trim()) parts.push(`额外补充的基底词/触发词：${asString(args.base).trim()}`)
     if (asString(args.note).trim()) parts.push(`额外要求：${asString(args.note).trim()}`)
   }
+  if (asString(args.hardNote).trim()) parts.push(`【用户硬约束】${asString(args.hardNote).trim()}`)
+  parts.push(qualityDirection(args, mode))
+  if (args.familyKind === 'tag+NL') {
+    parts.push('【positive 形态验收】必须用英文。第一行写逗号分隔的基础标签；真换行后写 2–3 句完整英文自然语言，保留动作、外观、环境和光影。不得只写标签，不得将中文需求照抄成标签。notes 可以中文。')
+  } else if (args.familyKind === 'NL') {
+    parts.push('【positive 形态验收】使用完整英文画面描述句子，不用标签列表；notes 可以中文。')
+  } else if (args.familyKind === 'NL+layout') {
+    parts.push(layoutInstruction())
+  }
   // 网关背后的模型可能无视系统提示里的输出格式（实测 GLM 会改写成设计文档，
   // 或自创一套 poster schema）。实测有效的双锚写法：
   //   ① 系统提示首尾各锚一次「只输出 JSON 信封」；
   //   ② 用户消息末尾把「positive 放什么」说破——只说"输出 JSON"它会自创 schema。
+  if (args.formatRepair) parts.push(asString(args.formatRepair))
   parts.push('【输出提醒】只输出系统提示里约定的那个 JSON 对象，不要 JSON 之外的任何文字。'
     + 'positive 字段放最终提示词正文（按目标模型族的形态：caption 散文 / tag 串 / 单行 Layout 草稿 JSON 字符串），'
     + 'negative 字段放负面词，params 放 steps / cfg / sampler / size，notes 放不超过 3 条中文要点。')

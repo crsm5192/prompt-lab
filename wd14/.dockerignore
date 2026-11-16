@@ -1,0 +1,7 @@
+data/
+images/
+__pycache__/
+.env*
+*.log
+*.err
+test_*.py

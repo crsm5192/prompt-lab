@@ -13,6 +13,7 @@
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync, chmodSync, renameSync } from 'node:fs'
 import { dirname, join } from 'node:path'
+import { normalizeBaseURL } from './llm.js'
 
 const MASK = '••••••••'
 
@@ -101,7 +102,7 @@ export function createSettings({ dir, defaults }) {
     const next = { ...cur }
 
     if (patch.baseURL !== undefined) {
-      const v = String(patch.baseURL || '').trim().replace(/\/+$/, '')
+      const v = normalizeBaseURL(patch.baseURL)
       if (v) next.baseURL = v
       else delete next.baseURL
     }

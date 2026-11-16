@@ -10,13 +10,24 @@
 
 const DEFAULT_TIMEOUT = 180000
 
+export function normalizeBaseURL(value) {
+  const text = String(value || '').trim()
+  if (!text) return ''
+  let url
+  try { url = new URL(text) } catch { throw Object.assign(new Error('API 地址无效'), { status: 400 }) }
+  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) {
+    throw Object.assign(new Error('API 地址必须是无用户名、查询参数的 http/https URL'), { status: 400 })
+  }
+  return url.href.replace(/\/+$/, '')
+}
+
 /**
  * @param {() => object} provider 返回 { baseURL, apiKey, defaultModel, timeoutSeconds, maxTokens }
  */
 export function createLLM(provider) {
   const current = () => (typeof provider === 'function' ? provider() : provider) || {}
 
-  const base = () => String(current().baseURL || '').replace(/\/+$/, '')
+  const base = () => normalizeBaseURL(current().baseURL)
   const key = () => String(current().apiKey || '')
   const defaultModel = () => String(current().defaultModel || '')
   const timeout = () => (Number(current().timeoutSeconds) * 1000) || DEFAULT_TIMEOUT
@@ -92,7 +103,7 @@ export function createLLM(provider) {
       }
       const choice = (json.choices && json.choices[0]) || {}
       const content = (choice.message && choice.message.content) || ''
-      if (!content) throw new Error('模型返回空内容')
+      if (!content) throw Object.assign(new Error('模型返回空内容'), { status: 502 })
 
       return {
         text: content,
@@ -119,10 +130,11 @@ export function createLLM(provider) {
    */
   async function listModels(override = {}) {
     const cfg = current()
-    const b = String(override.baseURL || base() || '').replace(/\/+$/, '')
+    const activeBase = base()
+    const b = normalizeBaseURL(override.baseURL || activeBase)
     const k = override.apiKey !== undefined && override.apiKey !== '' && override.apiKey !== '••••••••'
       ? String(override.apiKey)
-      : key()
+      : (b === activeBase ? key() : '')
 
     if (!b) return { ok: false, base: b, models: [], error: 'API URL 未配置' }
 

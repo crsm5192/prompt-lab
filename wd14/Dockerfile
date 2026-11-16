@@ -4,20 +4,22 @@
 #   1. 每次重启都装依赖（2 核机器上要 1-2 分钟），且失败就起不来
 #   2. 依赖版本漂移（今天能装明天不一定）
 #   3. 镜像层缓存后启动是秒级的
-FROM docker.1ms.run/library/python:3.11-slim
-
-# 只装运行必需的系统包（onnxruntime 的 wheel 自带 so，无需 gcc）
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl \
-    && rm -rf /var/lib/apt/lists/*
-
+ARG PYTHON_IMAGE=docker.1ms.run/library/python:3.11.17-slim@sha256:b95327ce1439e687237841b0210677aeadd62d55a060a5f6bcb9c15bf6251dd3
+FROM ${PYTHON_IMAGE}
 WORKDIR /app
 
 # 先单独装依赖，这样改代码不会让依赖层失效
+ARG PYTHON_PACKAGE_INDEX=https://pypi.org/simple
 COPY requirements.txt /app/requirements.txt
-RUN pip install --no-cache-dir -r /app/requirements.txt
+RUN pip install --no-cache-dir --index-url "$PYTHON_PACKAGE_INDEX" -r /app/requirements.txt
 
-COPY server.py /app/server.py
+COPY server.py preprocess.py /app/
+
+# 发布标识放在依赖安装后，版本变化复用已有依赖层。
+ARG VCS_REF=development
+ARG APP_VERSION=development
+LABEL org.opencontainers.image.revision=$VCS_REF \
+      org.opencontainers.image.version=$APP_VERSION
 
 ENV PYTHONUNBUFFERED=1 \
     WD14_MODEL_DIR=/models \
