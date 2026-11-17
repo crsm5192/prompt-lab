@@ -1,4 +1,4 @@
-// Text checks guide bounded corrections; they do not score the generated image.
+// Text checks guide format correction and budget rewrites; they do not score the generated image.
 import { measureLength, promptBudget } from './engine.js'
 const unquoted = (s) => String(s || '').replace(/"[^"]*"|“[^”]*”/g, '')
 const requestText = (task) => unquoted(['brief', 'source', 'feedback', 'note', 'hardNote', 'base'].map((k) => task[k] || '').join('\n')

@@ -154,7 +154,8 @@ function checkLengthAndRepeat(positive, family, notes) {
 
 // ── 核心：生成/润色/迭代/整理 ───────────────────────────────────────────────
 
-async function doComposeOnce(payload) {
+async function doComposeOnce(payload, signal) {
+  signal?.throwIfAborted()
   const mode = ['gen', 'refine', 'iterate', 'reverse'].includes(payload.mode)
     ? payload.mode : 'gen'
   const f = familyOf(payload.family)
@@ -171,6 +172,7 @@ async function doComposeOnce(payload) {
     model: payload.model,
     temperature: config.llm.temperature?.[mode] ?? 0.6,
     maxTokens: config.llm.maxTokens,
+    signal,
   })
 
   const parsed = extractJson(r.text)
@@ -551,10 +553,6 @@ function finishResult(result, family, retried = false, payload = {}, repairAttem
   result.quality = { ...reviewPrompt(result, family, payload), retried, repairAttempts }
   if (result.validation.unusable) throw Object.assign(new Error('模型未返回可用提示词'), { status: 502 })
   const budget = result.quality.budget
-  if (budget?.enforced && budget.exceeded) {
-    throw Object.assign(new Error(`迭代正文约 ${result.quality.approximateTokens} token，仍超过 ${budget.maxTokens} 个应用估算 token 的输出上限；自动重组未能在保留设定与反馈的同时满足预算。请简化非必要要求后重试，上一版未被替换。`),
-      { status: 502, code: 'PROMPT_BUDGET_EXCEEDED', length: { value: result.quality.approximateTokens, maxTokens: budget.maxTokens, repairAttempts } })
-  }
   if (budget?.enforced && result.length) {
     result.length = { ...result.length, targetMax: budget.maxTokens, hardMax: budget.maxTokens, enforced: true,
       headroomWords: Math.max(0, Math.floor((budget.maxTokens - result.length.value) / 1.45)),
@@ -566,30 +564,45 @@ function finishResult(result, family, retried = false, payload = {}, repairAttem
   return result
 }
 
-async function doCompose(payload) {
+async function doCompose(payload, { signal } = {}) {
   validateTask(payload)
   const family = familyOf(payload.family)
-  let result = await doComposeOnce(payload)
+  let result = await doComposeOnce(payload, signal)
   const first = result
   let repairAttempts = 0
+  let stalled = 0
   while (true) {
+    signal?.throwIfAborted()
     const validation = validateOutput(result.positive, family, result.params)
     const quality = reviewPrompt(result, family, payload)
     if (validation.valid && quality.valid) break
-    // Format/quality still share one correction. Iteration length alone may need one more.
-    const mayRetry = repairAttempts === 0 || (repairAttempts === 1 && quality.budget?.enforced && quality.budget.exceeded)
+    // Ordinary format/quality gets one correction; iteration keeps repacking until it fits.
+    const overBudget = quality.budget?.enforced && quality.budget.exceeded
+    const mayRetry = repairAttempts === 0 || overBudget
     if (!mayRetry) break
     repairAttempts++
+    const targetRatio = Math.max(0.35, 0.9 - (repairAttempts - 1) * 0.1 - stalled * 0.05)
     try {
       const repair = repairInstruction(family, [...validation.issues, ...quality.issues])
         + '\n【待修正候选】' + JSON.stringify({ positive: result.positive, negative: result.negative })
-        + (quality.budget?.enforced ? `\n【完整重组验收】保留上一版全部画面事实、本轮反馈、触发词和引用文字；标签与正文共计 ≤ ${quality.budget.maxTokens} 个应用估算 token，英文优先约 ${Math.floor(quality.budget.maxTokens * (repairAttempts === 1 ? 0.9 : 0.8) / 1.45)} 词。重新写一份自洽最终状态，移除旧错误表达与同义重复，不追加补丁，不机械截断，不改采样参数。` : '')
+        + (quality.budget?.enforced ? `\n【完整重组验收】第 ${repairAttempts} 次重组，当前约 ${quality.approximateTokens} token。保留上一版全部画面事实、本轮反馈、触发词和引用文字；标签与正文共计 ≤ ${quality.budget.maxTokens} 个应用估算 token，英文优先约 ${Math.floor(quality.budget.maxTokens * targetRatio / 1.45)} 词。重新写一份自洽最终状态，移除旧错误表达与同义重复，不追加补丁，不机械截断，不改采样参数。` : '')
         + (quality.budget?.enforced ? '\n反馈重点保护的细节沿用原文具体称谓，不能将其泛化；核对数量、形状、接触和相对位置，先省通用修饰，不改物件或文字落位、不补新视线。' : '')
-      const corrected = await doComposeOnce({ ...payload, formatRepair: repair, hardNote: [payload.hardNote, repair].filter(Boolean).join('\n') })
+        + (overBudget && repairAttempts > 1 ? '\n【切换重组策略】前轮仍超预算，不能只沿用长句骨架换几个词。先在内部整合主体、动作接触、服装、构图和光影的最终事实，再从头组织简洁正文；将同一物件的属性并入同一处，标签与正文不重复整套清单，省去通用修饰，用紧凑分句承载不同细节。超限只说明本轮仍需优化，继续重写到预算内。' : '')
+      const corrected = await doComposeOnce({ ...payload, formatRepair: repair, hardNote: [payload.hardNote, repair].filter(Boolean).join('\n') }, signal)
+      signal?.throwIfAborted()
       corrected.llmMs += result.llmMs || 0
       if (quality.budget?.enforced) corrected.params = first.params
-      result = corrected
+      if (overBudget && reviewPrompt(corrected, family, payload).budget?.exceeded && corrected.length?.value >= result.length?.value) {
+        // Reuse the shortest complete candidate rather than accumulating longer failed drafts.
+        result.llmMs = corrected.llmMs
+        stalled++
+      } else {
+        result = corrected
+        stalled = 0
+      }
     } catch (e) {
+      if (signal?.aborted) throw e
+      if (overBudget) throw Object.assign(new Error('提示词重组模型调用失败：' + String(e.message || e)), { status: e.status || 502 })
       result.notes.push('修正调用失败，保留已生成结果：' + String(e.message || e).slice(0, 120))
       break
     }
@@ -631,6 +644,7 @@ const wrap = (fn) => async (req, res) => {
   try {
     await fn(req, res)
   } catch (e) {
+    if (res.destroyed || res.writableEnded) return
     res.status(e.status || 500).json({ ok: false, error: String(e && e.message ? e.message : e),
       ...(e.code ? { code: e.code } : {}), ...(e.length ? { length: e.length } : {}) })
   }
@@ -702,7 +716,11 @@ app.post('/api/cameraFromPrompt', wrap(async (req, res) => {
 }))
 
 app.post('/api/compose', wrap(async (req, res) => {
-  res.json(await doCompose(req.body || {}))
+  const controller = new AbortController()
+  const cancel = () => { if (!res.writableEnded) controller.abort() }
+  res.once('close', cancel)
+  try { res.json(await doCompose(req.body || {}, { signal: controller.signal })) }
+  finally { res.off('close', cancel) }
 }))
 
 app.post('/api/reverse', wrap(async (req, res) => {

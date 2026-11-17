@@ -38,9 +38,10 @@ export function createLLM(provider) {
    * 支持多模态：传 opts.image 时，user content 变成
    * [{type:'text'}, {type:'image_url'}]（OpenAI 兼容）。
    *
-   * @param {object} opts {system, user, image, model, temperature, maxTokens, timeoutMs}
+   * @param {object} opts {system, user, image, model, temperature, maxTokens, timeoutMs, signal}
    */
   async function chat(opts = {}) {
+    opts.signal?.throwIfAborted()
     const cfg = current()
     const b = base()
     if (!b) throw new Error('LLM 地址未配置：请在「设置」里填写 API URL')
@@ -77,6 +78,8 @@ export function createLLM(provider) {
 
     const thisTimeout = Number(opts.timeoutMs) > 0 ? Number(opts.timeoutMs) : timeout()
     const ctrl = new AbortController()
+    const cancel = () => ctrl.abort()
+    opts.signal?.addEventListener('abort', cancel, { once: true })
     const timer = setTimeout(() => ctrl.abort(), thisTimeout)
     const t0 = Date.now()
     const k = key()
@@ -112,10 +115,12 @@ export function createLLM(provider) {
         usage: json.usage || null,
       }
     } catch (e) {
+      if (opts.signal?.aborted) throw opts.signal.reason
       if (e.name === 'AbortError') throw new Error(`模型调用超时（${thisTimeout / 1000}s）`)
       throw e
     } finally {
       clearTimeout(timer)
+      opts.signal?.removeEventListener('abort', cancel)
     }
   }
 

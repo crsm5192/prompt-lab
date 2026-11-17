@@ -14,7 +14,7 @@ const good = '1girl, solo, white shirt,\nThe woman reads an open book by the win
 async function fixture(fallbackToWd14 = true, corruptRules = false) {
   const dir = mkdtempSync(join(tmpdir(), 'prompt-lab-api-'))
   const rulesPath = join(dir, 'rules.json'), configPath = join(dir, 'config.json')
-  const state = { replies: [], requests: [], chatCalls: 0, wdCalls: 0, loaded: true }
+  const state = { replies: [], requests: [], chatCalls: 0, wdCalls: 0, loaded: true, onChat: null, onChatClose: null }
   const stub = createServer(async (req, res) => {
     const chunks = []
     for await (const c of req) chunks.push(c)
@@ -27,6 +27,9 @@ async function fixture(fallbackToWd14 = true, corruptRules = false) {
       state.chatCalls++
       state.requests.push(body)
       const reply = state.replies.shift() ?? { positive: good, negative: '', params: {}, notes: [] }
+      state.onChat?.()
+      if (reply?.hold) { res.once('close', () => state.onChatClose?.()); return }
+      if (reply?.httpStatus) { res.writeHead(reply.httpStatus); return res.end(JSON.stringify({ error: reply.error })) }
       return res.end(JSON.stringify({ model: 'test-model', choices: [{ message: { content: typeof reply === 'string' ? reply : JSON.stringify(reply) } }] }))
     }
     res.writeHead(404); res.end('{}')
@@ -66,8 +69,8 @@ async function fixture(fallbackToWd14 = true, corruptRules = false) {
     await close()
     throw error
   }
-  const api = async (path, body) => {
-    const res = await fetch(base + path, body === undefined ? undefined : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+  const api = async (path, body, options = {}) => {
+    const res = await fetch(base + path, { ...(body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }), ...options })
     return { status: res.status, body: await res.json() }
   }
   return { state, api, rulesPath, close }
@@ -255,18 +258,66 @@ test('API validates inputs, repairs formats, reloads rules and reports unhealthy
       for (const [key,value] of Object.entries(params)) assert.equal(r.body.params[key], value)
       assert.equal(f.state.chatCalls - before, 3)
     })
-    await t.test('persistent iteration overflow fails visibly after bounded repairs without truncation', async () => {
-      const expanded = '1girl, solo, blue dress\nThe woman stands beside a window with ' + 'soft '.repeat(250) + 'light on her blue dress. A sign reads "Keep this exact text".'
+    await t.test('iteration keeps reorganizing past two repairs until it fits without accumulating longer drafts', async () => {
+      const expanded = '1girl, solo, blue dress, dpmix\nThe woman stands beside a window with ' + 'soft '.repeat(250) + 'light on her blue dress. A whale-tail silhouette is beside a sign reading "Keep this exact text".'
+      const longer = expanded + ' Additional ' + 'soft '.repeat(40) + 'details remain visible.'
+      const compact = '1girl, solo, blue dress, dpmix\nThe woman stands beside a window under soft light in one blue dress. A whale-tail silhouette is beside a sign reading "Keep this exact text".'
       const before = f.state.chatCalls
-      f.state.replies.push({ positive: expanded }, { positive: expanded }, { positive: expanded })
+      f.state.replies.push({ positive: expanded }, { positive: longer }, ...Array.from({ length: 4 }, () => ({ positive: expanded })), { positive: compact })
       const r = await f.api('/api/compose', { family: 'anima', mode: 'iterate', positive: expanded, feedback: 'Keep all quoted text.', verifyAnchors: false })
+      assert.equal(r.status, 200)
+      assert.equal(r.body.ok, true)
+      assert.equal(r.body.positive, compact)
+      assert.equal(r.body.quality.repairAttempts, 6)
+      assert.equal(r.body.validation.valid, true)
+      assert.ok(r.body.length.value <= 300)
+      assert.equal(r.body.length.budget.enforced, true)
+      assert.equal(r.body.code, undefined)
+      assert.equal(f.state.chatCalls - before, 7)
+      const repairs = f.state.requests.slice(before + 1).map((request) => request.messages[1].content)
+      assert.match(repairs[1], /切换重组策略/)
+      assert.ok(!repairs[1].includes(longer))
+      const targets = repairs.map((request) => Number(request.match(/英文优先约 (\d+) 词/)[1]))
+      assert.ok(targets[1] < targets[0])
+      assert.ok(targets.at(-1) < targets[1])
+    })
+    await t.test('disconnecting an iteration aborts its pending rewrite and stops subsequent model calls', async () => {
+      const expanded = '1girl, solo, blue dress\nThe woman stands in ' + 'soft '.repeat(250) + 'light. A sign reads "Blue tide".'
+      const before = f.state.chatCalls
+      f.state.replies.push({ positive: expanded }, { hold: true })
+      let started, closed
+      const rewriting = new Promise((resolve) => { started = resolve })
+      const aborted = new Promise((resolve) => { closed = resolve })
+      f.state.onChat = () => { if (f.state.chatCalls === before + 2) started() }
+      f.state.onChatClose = () => closed()
+      const controller = new AbortController()
+      const request = f.api('/api/compose', { family: 'anima', mode: 'iterate', positive: expanded, feedback: 'Keep the scene.', verifyAnchors: false }, { signal: controller.signal })
+      try {
+        await rewriting
+        const rejected = assert.rejects(request, { name: 'AbortError' })
+        controller.abort()
+        await rejected
+        let timer
+        try {
+          await Promise.race([aborted, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Upstream rewrite was not aborted')), 1500) })])
+        } finally { clearTimeout(timer) }
+        assert.equal(f.state.chatCalls - before, 2)
+      } finally {
+        controller.abort()
+        f.state.onChat = null
+        f.state.onChatClose = null
+      }
+    })
+    await t.test('an unavailable upstream remains a service error rather than a prompt-budget rejection', async () => {
+      const expanded = '1girl, solo, blue dress\nThe woman stands in ' + 'soft '.repeat(250) + 'light. A sign reads "Blue tide".'
+      const before = f.state.chatCalls
+      f.state.replies.push({ positive: expanded }, { httpStatus: 503, error: 'Model service temporarily unavailable' })
+      const r = await f.api('/api/compose', { family: 'anima', mode: 'iterate', positive: expanded, feedback: 'Keep the scene.', verifyAnchors: false })
       assert.equal(r.status, 502)
-      assert.equal(r.body.ok, false)
-      assert.equal(r.body.code, 'PROMPT_BUDGET_EXCEEDED')
-      assert.match(r.body.error, /仍超过 300/)
-      assert.equal(r.body.length.repairAttempts, 2)
+      assert.match(r.body.error, /模型调用失败.*503/)
+      assert.equal(r.body.code, undefined)
       assert.equal(r.body.positive, undefined)
-      assert.equal(f.state.chatCalls - before, 3)
+      assert.equal(f.state.chatCalls - before, 2)
     })
     await t.test('MOSS iteration retains requested tags and Layout without forcing prose compaction', async () => {
       const before = f.state.chatCalls
