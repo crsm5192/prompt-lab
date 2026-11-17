@@ -295,6 +295,14 @@ const LEN_LIMITS = {
   tag: { target: 75, hard: 77 },          // noobai / generic：SDXL 77 token 硬分块
 }
 
+/** Application writing budget; structured Layout data keeps its separate contract. */
+export function promptBudget(family, mode = 'gen', positive = '') {
+  const kind = asString(family?.kind) || 'tag'
+  if (mode === 'reverse' || (kind === 'NL+layout' && asString(positive).trim().startsWith('{'))) return null
+  if (mode !== 'iterate' && !['tag+NL', 'NL+layout'].includes(kind)) return null
+  return kind === 'NL+layout' ? 360 : (LEN_LIMITS[kind]?.target ?? null)
+}
+
 export function measureLength(text, family, rules) {
   const s = asString(text)
   if (!s) return null
@@ -628,7 +636,7 @@ export function buildSystem(family, mode, rules, extraNote) {
     lines.push('保留有信息量的内容，剔除评论/水印/用户名等噪声，并按该族规则改写格式。')
   } else if (mode === 'iterate') {
     lines.push('本次任务【按反馈迭代】：在上一版提示词基础上，按用户的新要求精确修改。')
-    lines.push('未被要求改动的部分必须原样保留（尤其是角色触发词与 LoRA 标记）；只改用户指明的地方。')
+    lines.push('未被要求改动的画面设定保持；角色触发词、LoRA 标记和画内引用文字逐字保留。允许重新组织句子与合并同义表达，只改变用户指明的画面事实。')
     lines.push('【禁止加质量词与安全标签】迭代时不要把 masterpiece / best quality / highres / score_* '
       + '或 safe / nsfw 加回正面。')
     lines.push('在 notes 中说明这一轮改了什么。')
@@ -643,8 +651,12 @@ export function buildSystem(family, mode, rules, extraNote) {
         ? '上一版若只有标签、缺自然语言段，必须补齐：后半段用 2-3 句完整英文自然语言写外观细节、'
           + '动作与画风环境光影——这是本族的硬性要求，不能因为上一版没有就省略。'
         : ''))
-    lines.push('【不得缩水】迭代只应改动用户指明的部分，其余内容逐项保留；'
-      + '不允许把上一版完整的描述压缩成几个标签，也不允许把自然语言段删掉。')
+    lines.push('【保留设定，重组表达】每轮输出一份完整的最终画面状态，替换已经纠正的旧描述，合并重复标签和句子；'
+      + '标签与正文分工，不逐项复述同一件服装、同一接触或光影关系。保留主体、数量、动作、服装、构图、光源、影子与指定细节；'
+      + '正向用简短的正确状态表达，衣物只有一套时写清一套即可，不展开备用袖子、第二件衣物等否定清单。负面围绕本次异常更新并去重，保留用户的明确排除。'
+      + '不追加历轮修改历史，不因压缩而删除自然语言段、触发词或引用文字。')
+    const budget = promptBudget(f, mode)
+    if (budget !== null) lines.push(`【迭代输出长度验收】${f.kind === 'NL+layout' ? '普通正文（Layout 数据除外）' : '正向正文'}必须控制在 ${budget} 个应用估算 token 以内，英文约 ${Math.floor(budget / 1.45)} 词；优先用约 ${Math.floor(budget * 0.9 / 1.45)} 词留下余量。信息预算包含标签与正文，未改变的设定也要简洁重组，不允许只追加本轮补丁。`)
   } else {
     lines.push('本次任务【按需求生成】：依据用户描述产出可直接出图的完整提示词，内容要具体（构图/姿势/服装/表情/光线/背景），不要空泛。')
   }
@@ -712,6 +724,8 @@ export function buildUser(args, mode) {
       parts.push('【排版提醒】上一版是单行密集文本。本族要求用真换行分段：标签段一行、自然语言段各占一行。')
     }
     parts.push(`本轮修改要求：\n${asString(args.feedback).trim()}`)
+    const budget = promptBudget({ kind: famKind }, mode, cur)
+    if (budget !== null) parts.push(`【本轮长度预算】当前正向约 ${measureLength(cur, { kind: famKind })?.value || 0} token；完整修改后的 positive 必须 ≤ ${budget} 个应用估算 token（英文约 ${Math.floor(budget / 1.45)} 词）。保留上一版设定和本次修改，重写为一份完整最终状态；合并同义句、标签与重复的否定清单，不机械追加、不截断。`)
   } else if (mode === 'reverse') {
     if (asString(args.refTags).trim()) parts.push(`图像反推得到的 Danbooru 标签：\n${asString(args.refTags).trim()}`)
     if (asString(args.refDesc).trim()) parts.push(`图像反推得到的画面描述：\n${asString(args.refDesc).trim()}`)

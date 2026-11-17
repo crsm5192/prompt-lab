@@ -179,13 +179,30 @@ test('MOSS plain prose, requested tags and Layout retain their separate forms', 
   assert.equal(reviewPrompt(layout, rules.families.moss, { brief: '不用 Layout。' }).valid, false)
 })
 
-test('conciseness checks request a rewrite while retaining source text and local iteration', () => {
+test('conciseness repacks iteration wording without mutating source text or faithful reverse', () => {
   const scene = { positive: '1girl, solo, solo,\n' + 'The woman wears a red linen dress with ' + 'small '.repeat(215) + 'buttons. Warm light enters from the left window.', negative: '' }
   const saved = scene.positive
   assert.match(reviewPrompt(scene, rules.families.anima).issues.join(' '), /300/)
   assert.match(reviewPrompt(scene, rules.families.anima).issues.join(' '), /重复/)
   assert.equal(scene.positive, saved)
-  assert.equal(reviewPrompt(scene, rules.families.anima, { mode: 'iterate', positive: saved, feedback: 'Only change red to blue.' }).valid, true)
+  const iteration = reviewPrompt(scene, rules.families.anima, { mode: 'iterate', positive: saved, feedback: 'Only change red to blue.' })
+  assert.equal(iteration.valid, false)
+  assert.deepEqual(iteration.budget, { maxTokens: 300, exceeded: true, enforced: true })
+  assert.equal(scene.positive, saved)
+  assert.equal(reviewPrompt(scene, rules.families.anima, { mode: 'reverse' }).valid, true)
+  const short = { positive: '1girl, solo, blue dress\nThe woman stands beside a window. Warm light falls on the blue dress.', negative: '' }
+  assert.equal(reviewPrompt(short, rules.families.anima, { mode: 'iterate', feedback: 'Only change red to blue.' }).valid, true)
   const text = { positive: 'A poster displays "Read this.\nRead this." on a white background.', negative: '' }
   assert.equal(reviewPrompt(text, rules.families.moss).valid, true)
+})
+
+test('iteration budgets cover text families and leave structured Layout data intact', () => {
+  for (const [id, limit] of [['anima', 300], ['moss', 360], ['krea2', 440], ['generic', 75]]) {
+    const result = reviewPrompt({ positive: 'blue '.repeat(320), negative: '' }, rules.families[id], { mode: 'iterate', feedback: 'Keep the scene.' })
+    assert.deepEqual(result.budget, { maxTokens: limit, exceeded: true, enforced: true })
+  }
+  const layout = { positive: JSON.stringify({ summary: { caption: 'blue '.repeat(400) }, items: [{ caption: 'A cup.', bbox: [0,0,512,512] }] }), negative: '' }
+  const checked = reviewPrompt(layout, rules.families.moss, { mode: 'iterate', feedback: 'Keep the Layout.' })
+  assert.equal(checked.valid, true)
+  assert.equal(checked.budget, null)
 })

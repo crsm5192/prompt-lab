@@ -215,6 +215,75 @@ test('API validates inputs, repairs formats, reloads rules and reports unhealthy
       assert.match(r.body.notes[0], /提示词仍需检查/)
       assert.equal(f.state.chatCalls - before, 2)
     })
+    await t.test('repeated Anima iterations repack over-budget candidates and preserve the scene', async () => {
+      const expanded = 'adult woman, solo, single blue maid dress, white gloves, navy mary janes, dpmix\nThe woman wears one blue maid dress with one pair of white gloves and one pair of navy mary janes, under ' + 'soft '.repeat(245) + 'window light. A whale-tail silhouette follows her shadow on the wall beside a sign reading "Blue tide".'
+      const compact = 'adult woman, solo, single blue maid dress, white gloves, navy mary janes, dpmix\nThe woman wears one blue maid dress, one pair of white gloves and one pair of navy mary janes in the original pose under soft window light. A whale-tail silhouette follows her shadow on the wall beside a sign reading "Blue tide".'
+      let current = expanded
+      const before = f.state.chatCalls
+      for (const feedback of ['只保留一套衣物，不能误杀剪影与鲸尾。', '手指自然，保持鲸尾剪影和原构图。', '光线更柔和，保留原衣物、姿态和文字。']) {
+        f.state.replies.push({ positive: expanded }, { positive: compact })
+        const r = await f.api('/api/compose', { family: 'anima', mode: 'iterate', positive: current, feedback, verifyAnchors: false })
+        assert.equal(r.status, 200)
+        assert.equal(r.body.validation.valid, true)
+        assert.equal(r.body.quality.valid, true)
+        assert.equal(r.body.quality.repairAttempts, 1)
+        assert.ok(r.body.length.value <= 300)
+        assert.equal(r.body.length.hardMax, 300)
+        assert.equal(r.body.length.budget.enforced, true)
+        assert.equal(r.body.positive, compact)
+        assert.match(r.body.notes.join(' '), /按迭代预算重组/)
+        const request = f.state.requests.at(-1).messages[1].content
+        assert.ok(request.includes(current))
+        assert.ok(request.includes(feedback))
+        assert.match(request, /完整重组验收/)
+        assert.match(request, /≤ 300/)
+        assert.match(request, /待修正候选/)
+        current = r.body.positive
+      }
+      assert.equal(f.state.chatCalls - before, 6)
+    })
+    await t.test('iteration may repack length a second time while retaining sampling parameters', async () => {
+      const expanded = '1girl, solo, blue dress\nThe woman stands beside a window with ' + 'soft '.repeat(250) + 'light on her blue dress. A whale-tail shadow remains visible on the wall.'
+      const compact = '1girl, solo, blue dress\nThe woman stands beside a window under soft light. A whale-tail shadow remains visible on the wall.'
+      const params = { steps: '34', cfg: '4.5', sampler: 'er_sde', size: '1344x896' }
+      const before = f.state.chatCalls
+      f.state.replies.push({ positive: expanded, params }, { positive: expanded, params: { steps: 99, cfg: 9 } }, { positive: compact, params: { steps: 77, cfg: 7 } })
+      const r = await f.api('/api/compose', { family: 'anima', mode: 'iterate', positive: expanded, feedback: 'Only make the window light softer.', verifyAnchors: false })
+      assert.equal(r.status, 200)
+      assert.equal(r.body.quality.repairAttempts, 2)
+      assert.ok(r.body.length.value <= 300)
+      for (const [key,value] of Object.entries(params)) assert.equal(r.body.params[key], value)
+      assert.equal(f.state.chatCalls - before, 3)
+    })
+    await t.test('persistent iteration overflow fails visibly after bounded repairs without truncation', async () => {
+      const expanded = '1girl, solo, blue dress\nThe woman stands beside a window with ' + 'soft '.repeat(250) + 'light on her blue dress. A sign reads "Keep this exact text".'
+      const before = f.state.chatCalls
+      f.state.replies.push({ positive: expanded }, { positive: expanded }, { positive: expanded })
+      const r = await f.api('/api/compose', { family: 'anima', mode: 'iterate', positive: expanded, feedback: 'Keep all quoted text.', verifyAnchors: false })
+      assert.equal(r.status, 502)
+      assert.equal(r.body.ok, false)
+      assert.equal(r.body.code, 'PROMPT_BUDGET_EXCEEDED')
+      assert.match(r.body.error, /仍超过 300/)
+      assert.equal(r.body.length.repairAttempts, 2)
+      assert.equal(r.body.positive, undefined)
+      assert.equal(f.state.chatCalls - before, 3)
+    })
+    await t.test('MOSS iteration retains requested tags and Layout without forcing prose compaction', async () => {
+      const before = f.state.chatCalls
+      const tags = '1girl, solo, blue dress, reading, garden'
+      f.state.replies.push({ positive: tags })
+      const tagResult = await f.api('/api/compose', { family: 'moss', mode: 'iterate', positive: tags, feedback: 'Only change the dress to blue.', verifyAnchors: false })
+      assert.equal(tagResult.status, 200)
+      assert.equal(tagResult.body.positive, tags)
+      assert.equal(tagResult.body.quality.repairAttempts, 0)
+      const layout = JSON.stringify({ width: 1024, height: 1024, bbox_coord_space: 'abs', bbox_format: 'xyxy', summary: { caption: 'A garden with ' + 'green '.repeat(400) + 'leaves.' }, items: [{ label: 'text', caption: 'A sign.', text: '春日茶会', bbox: [64,64,512,256] }] })
+      f.state.replies.push({ positive: layout, params: { size: '1024x1024' } })
+      const layoutResult = await f.api('/api/compose', { family: 'moss', mode: 'iterate', positive: layout, feedback: 'Keep the quoted Chinese title and Layout.', verifyAnchors: false })
+      assert.equal(layoutResult.status, 200)
+      assert.equal(layoutResult.body.quality.budget, null)
+      assert.equal(JSON.parse(layoutResult.body.positive).items[0].text, '春日茶会')
+      assert.equal(f.state.chatCalls - before, 2)
+    })
   } finally { await f.close() }
 })
 

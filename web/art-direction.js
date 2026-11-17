@@ -37,6 +37,7 @@ export function qualityDirection(args = {}, mode = 'gen') {
     lines.push('本次为忠实反推：准确还原可见构图、色块、光照、材质、姿态和遮挡；不设计新机位、不重新布光、不补隐藏手脚，也不根据构图偏好重排原图。')
   } else if (mode === 'iterate') {
     lines.push('本次为局部迭代：仅在反馈要求的范围内改善。未被要求改动的构图、动作、接触关系、材质和媒介保持；只有反馈要求重新构图时才重新设计，不能因默认增强而重排上一版。')
+    lines.push('保留画面设定允许精简重组文字；每轮产出完整最终状态，直接替换已经修正的表述并合并同义标签、接触与光影句。正向写正确的可见状态，负面合并重复异常词，不把历轮反馈逐条追加进正文，不靠重复否定第二套衣物等清单制造唯一性。')
     if (key !== 'auto') lines.push(`反馈允许改变构图时采用「${selected.label}」：${selected.instruction}`)
   } else {
     lines.push(`构图偏好「${selected.label}」：${selected.instruction}`)

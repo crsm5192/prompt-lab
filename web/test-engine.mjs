@@ -281,7 +281,7 @@ t('tag+NL 族的迭代指令要求补齐自然语言', () => {
   const sys = buildSystem(fam('anima'), 'iterate', merged, '')
   assert(/形态必须按族规范/.test(sys), '缺形态要求')
   assert(/缺自然语言段，必须补齐/.test(sys), '未点名补齐自然语言')
-  assert(/不得缩水/.test(sys), '缺不得缩水约束')
+  assert(/保留设定，重组表达/.test(sys) && /不因压缩而删除自然语言段、触发词或引用文字/.test(sys), '缺保留设定与正文的重组约束')
 })
 t('NL 族不被注入「补齐自然语言段」', () => {
   const sys = buildSystem(fam('krea2'), 'iterate', merged, '')

@@ -1,4 +1,5 @@
-// Text checks guide one correction; they do not score the generated image.
+// Text checks guide bounded corrections; they do not score the generated image.
+import { measureLength, promptBudget } from './engine.js'
 const unquoted = (s) => String(s || '').replace(/"[^"]*"|“[^”]*”/g, '')
 const requestText = (task) => unquoted(['brief', 'source', 'feedback', 'note', 'hardNote', 'base'].map((k) => task[k] || '').join('\n')
   .replace(/["“](anime|cartoon|illustration|painting|watercolou?r|line ?art|动漫|动画|二次元|卡通|插画|绘画|油画|水彩|线稿)["”]/gi, '$1')
@@ -36,21 +37,26 @@ export function reviewPrompt(result, family, task = {}) {
   const request = requestText(task)
   const mode = task.mode || 'gen'
   const optimize = ['gen', 'refine'].includes(mode)
+  const compact = optimize || mode === 'iterate'
   const tokens = typeof result.length?.value === 'number' ? result.length.value
-    : Math.round(positive.trim().split(/\s+/).filter(Boolean).length * 1.45)
-  if (!['tag+NL', 'NL+layout'].includes(kind)) return { valid: true, issues, scope: 'text' }
+    : (measureLength(positive, family)?.value || 0)
+  const budget = promptBudget(family, mode, positive)
+  const exceeded = compact && budget !== null && tokens > budget
+  const reviewed = () => ({ valid: !issues.length, issues, scope: 'text', approximateTokens: structured ? null : tokens,
+    targetMax: budget, budget: budget === null ? null : { maxTokens: budget, exceeded, enforced: mode === 'iterate' } })
+  if (!['tag+NL', 'NL+layout'].includes(kind) && mode !== 'iterate') return reviewed()
 
-  // Editing a colour or faithfully reversing an image must not silently shorten it.
-  const budget = kind === 'tag+NL' ? 300 : 360
-  if (!structured && optimize && tokens > budget) {
-    issues.push(`正文约 ${tokens} token，超过本次简洁生成目标 ${budget}；保留所有指定信息，合并重复描述并压缩修饰，不截断正文`)
+  // Iteration preserves scene facts while repacking its wording; reverse remains faithful.
+  if (exceeded) {
+    issues.push(`正文约 ${tokens} token，超过本次${mode === 'iterate' ? '迭代输出上限' : '简洁生成目标'} ${budget}；保留所有指定信息与本轮反馈，重新组织完整正文，合并重复描述并压缩修饰，不截断正文`)
   }
   const sentences = text.split(/(?<=[.!?])\s+/).map((s) => s.trim().toLowerCase()).filter((s) => s.length > 20)
-  if (!structured && optimize && new Set(sentences).size < sentences.length) issues.push('自然语言出现重复句，合并为一次描述并保留不同的动作和人物信息')
-  if (kind === 'tag+NL' && optimize) {
+  if (!structured && compact && new Set(sentences).size < sentences.length) issues.push('自然语言出现重复句，合并为一次描述并保留不同的动作和人物信息')
+  if (['tag+NL', 'tag'].includes(kind) && compact) {
     const tags = positive.split('\n')[0].split(',').map(label).filter(Boolean)
     if (new Set(tags).size < tags.length) issues.push('基础标签行有完全重复的标签，同一锚点只保留一次')
   }
+  if (!['tag+NL', 'NL+layout'].includes(kind)) return reviewed()
   if (kind === 'NL+layout' && optimize && !structured && !wantsTags(request) && !/[A-Za-z][^.!?\n]{8,}[.!?]/.test(text)) {
     issues.push('普通 MOSS 场景使用完整英文画面描述；仅在用户要求 tag 串时输出标签')
   }
@@ -82,5 +88,5 @@ export function reviewPrompt(result, family, task = {}) {
       issues.push('同一瞬间既腾空又双脚接地，保留用户要求的动作状态与相应支撑关系')
     }
   }
-  return { valid: !issues.length, issues, scope: 'text', approximateTokens: structured ? null : tokens, targetMax: structured ? null : budget }
+  return reviewed()
 }

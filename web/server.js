@@ -544,12 +544,22 @@ async function organizeWithLlm({ family, tags, sentences, note, hardNote, model 
 }
 
 // Validate the completed output, including salvage and reverse paths.
-function finishResult(result, family, retried = false, payload = {}) {
+function finishResult(result, family, retried = false, payload = {}, repairAttempts = retried ? 1 : 0) {
   result.notes = Array.isArray(result.notes) ? result.notes : []
   try { compileResultLayout(result, family) } catch (e) { throw Object.assign(e, { status: 502 }) }
   result.validation = { ...validateOutput(result.positive, family, result.params), retried }
-  result.quality = { ...reviewPrompt(result, family, payload), retried }
+  result.quality = { ...reviewPrompt(result, family, payload), retried, repairAttempts }
   if (result.validation.unusable) throw Object.assign(new Error('模型未返回可用提示词'), { status: 502 })
+  const budget = result.quality.budget
+  if (budget?.enforced && budget.exceeded) {
+    throw Object.assign(new Error(`迭代正文约 ${result.quality.approximateTokens} token，仍超过 ${budget.maxTokens} 个应用估算 token 的输出上限；自动重组未能在保留设定与反馈的同时满足预算。请简化非必要要求后重试，上一版未被替换。`),
+      { status: 502, code: 'PROMPT_BUDGET_EXCEEDED', length: { value: result.quality.approximateTokens, maxTokens: budget.maxTokens, repairAttempts } })
+  }
+  if (budget?.enforced && result.length) {
+    result.length = { ...result.length, targetMax: budget.maxTokens, hardMax: budget.maxTokens, enforced: true,
+      headroomWords: Math.max(0, Math.floor((budget.maxTokens - result.length.value) / 1.45)),
+      budget: { unit: 'token', targetMax: budget.maxTokens, hardMax: budget.maxTokens, enforced: true } }
+  }
   if (!result.validation.valid) result.notes.unshift('⚠ 输出格式仍需调整：' + result.validation.issues.join('；'))
   if (!result.quality.valid) result.notes.unshift('⚠ 提示词仍需检查：' + result.quality.issues.join('；'))
   if (ruleStore.warning) result.notes.unshift('⚠ ' + ruleStore.warning)
@@ -560,21 +570,35 @@ async function doCompose(payload) {
   validateTask(payload)
   const family = familyOf(payload.family)
   let result = await doComposeOnce(payload)
-  let validation = validateOutput(result.positive, family, result.params)
-  const quality = reviewPrompt(result, family, payload)
-  if (!validation.valid || !quality.valid) {
-    const first = result
+  const first = result
+  let repairAttempts = 0
+  while (true) {
+    const validation = validateOutput(result.positive, family, result.params)
+    const quality = reviewPrompt(result, family, payload)
+    if (validation.valid && quality.valid) break
+    // Format/quality still share one correction. Iteration length alone may need one more.
+    const mayRetry = repairAttempts === 0 || (repairAttempts === 1 && quality.budget?.enforced && quality.budget.exceeded)
+    if (!mayRetry) break
+    repairAttempts++
     try {
       const repair = repairInstruction(family, [...validation.issues, ...quality.issues])
-      result = await doComposeOnce({ ...payload, formatRepair: repair, hardNote: [payload.hardNote, repair].filter(Boolean).join('\n') })
-      result.llmMs += first.llmMs || 0
+        + '\n【待修正候选】' + JSON.stringify({ positive: result.positive, negative: result.negative })
+        + (quality.budget?.enforced ? `\n【完整重组验收】保留上一版全部画面事实、本轮反馈、触发词和引用文字；标签与正文共计 ≤ ${quality.budget.maxTokens} 个应用估算 token，英文优先约 ${Math.floor(quality.budget.maxTokens * (repairAttempts === 1 ? 0.9 : 0.8) / 1.45)} 词。重新写一份自洽最终状态，移除旧错误表达与同义重复，不追加补丁，不机械截断，不改采样参数。` : '')
+      const corrected = await doComposeOnce({ ...payload, formatRepair: repair, hardNote: [payload.hardNote, repair].filter(Boolean).join('\n') })
+      corrected.llmMs += result.llmMs || 0
+      if (quality.budget?.enforced) corrected.params = first.params
+      result = corrected
     } catch (e) {
-      result = first
-      result.notes.push('格式修正调用失败，保留原始结果：' + String(e.message || e).slice(0, 120))
+      result.notes.push('修正调用失败，保留已生成结果：' + String(e.message || e).slice(0, 120))
+      break
     }
-    return finishResult(result, family, true, payload)
   }
-  return finishResult(result, family, false, payload)
+  const finished = finishResult(result, family, repairAttempts > 0, payload, repairAttempts)
+  if (finished.quality.budget?.enforced) {
+    const before = Math.max(measureLength(payload.positive, family)?.value || 0, first.length?.value || 0)
+    if (before > finished.quality.budget.maxTokens) finished.notes.unshift(`已按迭代预算重组正文：约 ${before} → ${finished.length.value} token，上限 ${finished.quality.budget.maxTokens}；保留原设定与本轮修改。`)
+  }
+  return finished
 }
 
 async function doReverse(payload) {
@@ -606,7 +630,8 @@ const wrap = (fn) => async (req, res) => {
   try {
     await fn(req, res)
   } catch (e) {
-    res.status(e.status || 500).json({ ok: false, error: String(e && e.message ? e.message : e) })
+    res.status(e.status || 500).json({ ok: false, error: String(e && e.message ? e.message : e),
+      ...(e.code ? { code: e.code } : {}), ...(e.length ? { length: e.length } : {}) })
   }
 }
 
