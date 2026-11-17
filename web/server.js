@@ -584,6 +584,7 @@ async function doCompose(payload) {
       const repair = repairInstruction(family, [...validation.issues, ...quality.issues])
         + '\n【待修正候选】' + JSON.stringify({ positive: result.positive, negative: result.negative })
         + (quality.budget?.enforced ? `\n【完整重组验收】保留上一版全部画面事实、本轮反馈、触发词和引用文字；标签与正文共计 ≤ ${quality.budget.maxTokens} 个应用估算 token，英文优先约 ${Math.floor(quality.budget.maxTokens * (repairAttempts === 1 ? 0.9 : 0.8) / 1.45)} 词。重新写一份自洽最终状态，移除旧错误表达与同义重复，不追加补丁，不机械截断，不改采样参数。` : '')
+        + (quality.budget?.enforced ? '\n反馈重点保护的细节沿用原文具体称谓，不能将其泛化；核对数量、形状、接触和相对位置，先省通用修饰，不改物件或文字落位、不补新视线。' : '')
       const corrected = await doComposeOnce({ ...payload, formatRepair: repair, hardNote: [payload.hardNote, repair].filter(Boolean).join('\n') })
       corrected.llmMs += result.llmMs || 0
       if (quality.budget?.enforced) corrected.params = first.params
