@@ -102,6 +102,11 @@
   ul.notes li { margin: 2px 0; }
   .spin { display: inline-block; width: 12px; height: 12px; border: 2px solid var(--dim); border-top-color: var(--accent); border-radius: 50%; animation: sp .7s linear infinite; vertical-align: -2px; }
   @keyframes sp { to { transform: rotate(360deg); } }
+  .btn[data-running]::before { content: ""; display: inline-block; vertical-align: -2px; margin-right: 7px; width: 12px; height: 12px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: sp .8s linear infinite; }
+  .btn[data-running]:disabled { opacity: .9; cursor: progress; }
+  .task-progress { display: flex; align-items: center; gap: 8px; color: var(--text); font-size: 13px; margin-bottom: 10px; }
+  #taskElapsed { color: var(--dim); font-variant-numeric: tabular-nums; }
+  @media (prefers-reduced-motion: reduce) { .spin, .btn[data-running]::before { animation: none; } }
   .hidden { display: none !important; }
   /* 标签 / 角色 */
   .taglist { display: flex; flex-direction: column; gap: 3px; margin-top: 10px; max-height: 260px; overflow: auto; }
@@ -138,7 +143,7 @@
   <header>
     <h1>提示词工作台</h1>
     <span class="sub">NAS 版 · NSFW 反推走本地 WD14</span>
-    <span id="status" class="badge">就绪</span>
+    <span id="status" class="badge" role="status">就绪</span>
   </header>
 
   <div class="tabs" id="tabs">
@@ -213,11 +218,18 @@
 
       <div class="card">
         <h3>高级</h3>
-        <label>文本模型</label>
+        <label for="model">文本模型</label>
         <div style="display:flex;gap:6px;align-items:center">
           <select id="model" style="flex:1"></select>
           <button class="btn" id="openSettings" title="配置 API 地址 / 密钥 / 模型">⚙</button>
         </div>
+        <label for="reasoningEffort">思考强度</label>
+        <select id="reasoningEffort">
+          <option value="auto">模型默认</option>
+          <option value="low">低</option>
+          <option value="medium">中</option>
+          <option value="high">高</option>
+        </select>
         <label>额外要求（会并入系统提示）</label>
         <input id="hardNote" placeholder="例：不要出现任何建筑">
         <div class="row">
@@ -230,6 +242,7 @@
     <div>
       <div class="card">
         <h3>结果</h3>
+        <div id="taskProgress" class="task-progress hidden"><span class="spin" aria-hidden="true"></span><span id="taskLabel"></span><span id="taskElapsed"></span></div>
         <label>正向提示词</label>
         <textarea id="outPos" class="mono" readonly style="min-height:120px"></textarea>
         <div class="len" id="outLen"></div>
@@ -468,9 +481,31 @@ function setStatus(text, kind) {
   el.textContent = text;
   el.style.color = kind === 'err' ? 'var(--err)' : kind === 'ok' ? 'var(--ok)' : 'var(--dim)';
 }
-function busy(b) {
-  document.querySelectorAll('button.btn.primary, #runAssemble, #runNai').forEach((x) => { x.disabled = b; });
-  setStatus(b ? '处理中…' : '就绪', b ? '' : 'ok');
+const taskActions = {
+  gen: ['runGen', '正在生成提示词'], refine: ['runRefine', '正在润色'], iterate: ['runIterate', '正在迭代'],
+  reverse: ['runReverse', '正在反推'], assemble: ['runAssemble', '正在编排'], convert: ['runNai', '正在转换'],
+};
+function busy(kind) {
+  for (const [id] of Object.values(taskActions)) $(id).disabled = Boolean(kind);
+  $('taskProgress').classList.toggle('hidden', !kind);
+  if (kind) {
+    const [id, label] = taskActions[kind];
+    const button = $(id);
+    const started = performance.now();
+    $('taskLabel').textContent = label;
+    const tick = () => { $('taskElapsed').textContent = Math.floor((performance.now() - started) / 1000) + ' 秒'; };
+    tick();
+    state.activeTask = { button, caption: button.textContent, timer: setInterval(tick, 1000) };
+    button.setAttribute('data-running', '');
+    button.textContent = label + '…';
+    setStatus(label + '…');
+  } else if (state.activeTask) {
+    const { button, caption, timer } = state.activeTask;
+    clearInterval(timer);
+    button.removeAttribute('data-running');
+    button.textContent = caption;
+    state.activeTask = null;
+  }
 }
 /**
  * 复制到剪贴板。
@@ -808,9 +843,12 @@ function renderResult(r) {
 
 // ── 动作 ───────────────────────────────────────────────────────────────────
 async function run(kind) {
-  busy(true);
+  if (state.activeTask) return;
+  busy(kind);
   try {
     let r;
+    const effort = $('reasoningEffort').value;
+    const modelOptions = { model: $('model').value, ...(effort && effort !== 'auto' ? { reasoningEffort: effort } : {}) };
     let hardNote = $('hardNote').value;
     if (state.family === 'nibbles') {
       const preferences = [
@@ -836,24 +874,24 @@ async function run(kind) {
         mode: 'gen', family: state.family,
         brief: $('brief').value, base: $('base').value,
         composition: $('composition').value,
-        model: $('model').value, hardNote,
+        ...modelOptions, hardNote,
       });
     } else if (kind === 'refine') {
       r = await post('/compose', {
         mode: 'refine', family: state.family,
         source: $('source').value, base: $('refBase').value,
         composition: $('composition').value,
-        model: $('model').value, hardNote,
+        ...modelOptions, hardNote,
       });
     } else if (kind === 'iterate') {
       r = await post('/compose', {
         mode: 'iterate', family: state.family,
         positive: $('iterPos').value, negative: $('iterNeg').value,
         feedback: $('feedback').value,
-        model: $('model').value, hardNote,
+        ...modelOptions, hardNote,
       });
     } else if (kind === 'reverse') {
-      const payload = { family: state.family, model: $('model').value,
+      const payload = { family: state.family, ...modelOptions,
         organize: $('organize').checked, hardNote,
         engine: $('engine').value };
       if (state.imageB64) payload.imageB64 = state.imageB64;
@@ -871,7 +909,7 @@ async function run(kind) {
     $('outNotes').innerHTML = '<li style="color:var(--err)">' + escapeHtml(String(e.message || e)) + '</li>';
     if (kind === 'reverse') $('revEngine').innerHTML = '<span style="color:var(--err)">反推失败</span>';
   } finally {
-    busy(false);
+    busy(null);
   }
 }
 

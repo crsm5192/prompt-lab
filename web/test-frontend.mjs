@@ -29,6 +29,7 @@ test('rule-provided family labels are escaped in selectable buttons', () => {
 test('composition selection is submitted for generation and refinement', async () => {
   const { document } = parseHTML(source)
   document.querySelector('#composition option[value="diagonal"]').selected = true
+  document.querySelector('#reasoningEffort option[value="high"]').selected = true
   const requests = []
   const context = { document, $: (id) => document.getElementById(id), state: { family: 'anima' }, busy() {}, renderResult() {}, setStatus() {},
     post: async (path, payload) => { requests.push({ path, payload }); return { positive: 'test', notes: [] } } }
@@ -38,6 +39,34 @@ test('composition selection is submitted for generation and refinement', async (
   assert.equal(requests.length, 2)
   assert.equal(requests[0].payload.composition, 'diagonal')
   assert.equal(requests[1].payload.composition, 'diagonal')
+  assert.ok(requests.every(r => r.payload.reasoningEffort === 'high'))
+})
+
+test('generation displays a pending indicator and restores the button on success and failure', async () => {
+  const { document } = parseHTML(source)
+  const $ = id => document.getElementById(id)
+  const state = { family: 'generic' }
+  let resolve, reject, tick, elapsed = 0
+  const context = vm.createContext({ $, document, state, performance: { now: () => elapsed },
+    setInterval(fn) { tick = fn; return 1 }, clearInterval() { tick = null }, renderResult() {},
+    escapeHtml: s => s, post: () => new Promise((yes, no) => { resolve = yes; reject = no }) })
+  vm.runInContext(segment('function setStatus(', 'function copy(') + segment('async function run(', "$('runGen').onclick"), context)
+  for (const fails of [false, true]) {
+    const pending = vm.runInContext('run("gen")', context)
+    assert.equal($('runGen').disabled, true)
+    assert.match($('runGen').textContent, /正在生成/)
+    assert.equal($('taskProgress').classList.contains('hidden'), false)
+    elapsed += 2000; tick()
+    assert.equal($('taskElapsed').textContent, '2 秒')
+    if (fails) reject(new Error('provider unavailable'))
+    else resolve({ positive: 'prompt' })
+    await pending
+    assert.equal(tick, null)
+    assert.equal($('runGen').disabled, false)
+    assert.equal($('runGen').textContent, '生成提示词')
+    assert.equal($('taskProgress').classList.contains('hidden'), true)
+    assert.equal($('status').textContent, fails ? '失败' : '完成')
+  }
 })
 
 test('composition controls are disabled for faithful reverse and local iteration', () => {

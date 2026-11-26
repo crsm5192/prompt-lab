@@ -111,6 +111,35 @@ test('failed model calls share the UI request ID without recording arbitrary req
   } finally { await f.close() }
 })
 
+test('thinking effort reaches model calls, including repairs and reverse, and defaults to omission', async () => {
+  const f = await fixture()
+  try {
+    const compose = { family: 'anima', brief: 'a woman reads by the window', verifyAnchors: false }
+    await f.api('/api/compose', compose)
+    assert.ok(f.state.requests.length)
+    assert.ok(f.state.requests.every(r => !Object.hasOwn(r, 'reasoning_effort')))
+    f.state.requests.length = 0
+    f.state.replies.push({ positive: 'solo' }, { positive: good })
+    assert.equal((await f.api('/api/compose', { ...compose, reasoningEffort: 'high' })).status, 200)
+    assert.equal(f.state.requests.length, 2)
+    assert.ok(f.state.requests.every(r => r.reasoning_effort === 'high'))
+    assert.equal((await f.api('/api/reverse', { family: 'anima', engine: 'vlm', imageB64: 'test', reasoningEffort: 'low' })).status, 200)
+    assert.equal(f.state.requests.at(-1).reasoning_effort, 'low')
+    const calls = f.state.chatCalls
+    assert.equal((await f.api('/api/compose', { ...compose, reasoningEffort: 'invalid' })).status, 400)
+    assert.equal(f.state.chatCalls, calls)
+    f.state.replies.push({ httpStatus: 400, error: 'unsupported reasoning_effort for model' })
+    const unsupported = await f.api('/api/compose', { ...compose, reasoningEffort: 'medium' })
+    assert.equal(unsupported.status, 400)
+    assert.match(unsupported.body.error, /模型默认/)
+    f.state.replies.push({ httpStatus: 422, error: 'invalid reasoning_effort' })
+    const reverse = await f.api('/api/reverse', { family: 'anima', imageB64: 'test', reasoningEffort: 'medium' })
+    assert.equal(reverse.status, 400)
+    assert.equal(reverse.body.code, 'UNSUPPORTED_REASONING_EFFORT')
+    assert.equal(f.state.wdCalls, 0)
+  } finally { await f.close() }
+})
+
 test('art direction follows the selected mode across the default families', () => {
   for (const family of Object.values(rules.families)) {
     for (const mode of ['gen', 'refine']) {

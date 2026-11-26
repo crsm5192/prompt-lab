@@ -9,6 +9,9 @@ export function inputError(message) {
 
 export function validateTask(payload, reverse = false) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw inputError('请求必须是对象')
+  if (payload.reasoningEffort !== undefined && !['auto', 'low', 'medium', 'high'].includes(payload.reasoningEffort)) {
+    throw inputError('未知思考强度')
+  }
   const mode = reverse ? 'reverse' : (payload.mode || 'gen')
   if (!['gen', 'refine', 'iterate', 'reverse'].includes(mode)) throw inputError('未知任务模式')
   if (payload.composition !== undefined && !Object.hasOwn(COMPOSITION_MODES, payload.composition)) throw inputError('未知构图偏好')

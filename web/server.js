@@ -177,6 +177,7 @@ async function doComposeOnce(payload, signal) {
     system: sys,
     user: usr,
     model: payload.model,
+    reasoningEffort: payload.reasoningEffort,
     temperature: config.llm.temperature?.[mode] ?? 0.6,
     maxTokens: config.llm.maxTokens,
     signal,
@@ -371,6 +372,7 @@ async function reverseByVlm(payload, f) {
     user: ask,
     image: img,
     model,
+    reasoningEffort: payload.reasoningEffort,
     temperature: Number(vcfg.temperature ?? 0.3),
     maxTokens: Number(vcfg.maxTokens) || 1200,
     timeoutMs: Number(vcfg.timeoutSeconds) * 1000 || undefined,
@@ -445,6 +447,7 @@ async function doReverseOnce(payload) {
           const org = await organizeWithLlm({
             family: f, tags: vlmResult.tags, sentences: vlmResult.sentences,
             note: payload.note, hardNote: payload.hardNote, model: payload.model,
+            reasoningEffort: payload.reasoningEffort,
           })
           final = org.positive
           notes.push(...org.notes)
@@ -473,6 +476,7 @@ async function doReverseOnce(payload) {
       notes.push(`VLM 未能反推（${why.reason || 'unknown'}`
         + (why.matched ? `：${String(why.matched).slice(0, 50)}` : '') + '）')
     } catch (e) {
+      if (e.code === 'UNSUPPORTED_REASONING_EFFORT') throw e
       notes.push(`VLM 调用失败（${String(e.message || e).slice(0, 90)}）`)
     }
   }
@@ -499,6 +503,7 @@ async function doReverseOnce(payload) {
     const org = await organizeWithLlm({
       family: f, tags: base.tags, note: payload.note,
       hardNote: payload.hardNote, model: payload.model,
+      reasoningEffort: payload.reasoningEffort,
     })
     if (org.positive) { final = org.positive; llmUsed = true }
     notes.push(...org.notes)
@@ -525,13 +530,14 @@ async function doReverseOnce(payload) {
 }
 
 /** 用 LLM 把标签/描述整理成目标族提示词。 */
-async function organizeWithLlm({ family, tags, sentences, note, hardNote, model }) {
+async function organizeWithLlm({ family, tags, sentences, note, hardNote, model, reasoningEffort }) {
   const notes = []
   try {
     const r = await llm.chat({
       system: buildSystem(family, 'reverse', rules, asString(hardNote).trim()),
       user: buildUser({ refTags: tags || '', refDesc: sentences || '', note, familyKind: family.kind }, 'reverse'),
       model,
+      reasoningEffort,
       temperature: config.llm.temperature?.reverse ?? 0.4,
       maxTokens: config.llm.maxTokens,
     })
@@ -547,6 +553,7 @@ async function organizeWithLlm({ family, tags, sentences, note, hardNote, model 
     if (salv) return { positive: finalizeText(salv, family, rules), notes }
     notes.push('LLM 整理未返回可用内容')
   } catch (e) {
+    if (e.code === 'UNSUPPORTED_REASONING_EFFORT') throw e
     notes.push(`LLM 整理失败（${String(e.message || e).slice(0, 80)}）`)
   }
   return { positive: '', notes }
@@ -631,7 +638,8 @@ async function doReverse(payload) {
   if (!validation.valid && payload.organize !== false) {
     retried = true
     const correction = await organizeWithLlm({ family, tags: result.tags || '', sentences: result.positive || '',
-      note: payload.note, hardNote: [payload.hardNote, repairInstruction(family, validation.issues)].filter(Boolean).join('\n'), model: payload.model })
+      note: payload.note, hardNote: [payload.hardNote, repairInstruction(family, validation.issues)].filter(Boolean).join('\n'),
+      model: payload.model, reasoningEffort: payload.reasoningEffort })
     if (correction.positive) result.positive = correction.positive
     result.notes.push(...correction.notes)
     result.length = checkLengthAndRepeat(result.positive, family, result.notes)

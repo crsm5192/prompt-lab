@@ -40,7 +40,7 @@ export function createLLM(provider) {
    * 支持多模态：传 opts.image 时，user content 变成
    * [{type:'text'}, {type:'image_url'}]（OpenAI 兼容）。
    *
-   * @param {object} opts {system, user, image, model, temperature, maxTokens, timeoutMs, signal}
+   * @param {object} opts {system, user, image, model, reasoningEffort, temperature, maxTokens, timeoutMs, signal}
    */
   async function chat(opts = {}) {
     opts.signal?.throwIfAborted()
@@ -77,6 +77,7 @@ export function createLLM(provider) {
       max_tokens: Number(opts.maxTokens) || Number(cfg.maxTokens) || 4000,
       stream: false,
     }
+    if (opts.reasoningEffort && opts.reasoningEffort !== 'auto') body.reasoning_effort = opts.reasoningEffort
 
     const thisTimeout = Number(opts.timeoutMs) > 0 ? Number(opts.timeoutMs) : timeout()
     const ctrl = new AbortController()
@@ -87,7 +88,8 @@ export function createLLM(provider) {
     const k = key()
     const knownModel = model === cfg.defaultModel || cfg.models?.some(m => (m.id || m) === model)
     const trace = { model: knownModel && /^[\w./:-]{1,96}$/.test(model) ? model : 'custom',
-      input: opts.image ? 'image' : 'text', limit: body.max_tokens, timeoutMs: thisTimeout, outcome: 'network_error' }
+      input: opts.image ? 'image' : 'text', reasoningEffort: body.reasoning_effort || 'auto',
+      limit: body.max_tokens, timeoutMs: thisTimeout, outcome: 'network_error' }
     try {
       const res = await fetch(`${b}/chat/completions`, {
         method: 'POST',
@@ -103,6 +105,10 @@ export function createLLM(provider) {
       const text = await res.text()
       if (!res.ok) {
         trace.outcome = 'gateway_http'
+        if (body.reasoning_effort && [400, 422].includes(res.status) && /reasoning[_ -]effort/i.test(text)) {
+          throw Object.assign(new Error('模型接口 ' + res.status + '：当前模型未接受所选思考强度，请切换到「模型默认」或选择其他档位。'),
+            { status: 400, code: 'UNSUPPORTED_REASONING_EFFORT' })
+        }
         throw new Error(`模型接口 ${res.status}：${text.slice(0, 300)}`)
       }
       let json
