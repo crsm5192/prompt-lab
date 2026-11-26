@@ -31,7 +31,7 @@ test('composition selection is submitted for generation and refinement', async (
   document.querySelector('#composition option[value="diagonal"]').selected = true
   document.querySelector('#reasoningEffort option[value="high"]').selected = true
   const requests = []
-  const context = { document, $: (id) => document.getElementById(id), state: { family: 'anima' }, busy() {}, renderResult() {}, setStatus() {},
+  const context = { document, $: (id) => document.getElementById(id), state: { family: 'anima', cabinetIds: ['second', 'first'] }, busy() {}, renderResult() {}, setStatus() {},
     post: async (path, payload) => { requests.push({ path, payload }); return { positive: 'test', notes: [] } } }
   const code = segment('async function run(', "$('runGen').onclick")
   await vm.runInNewContext(code + '\nrun("gen");', context)
@@ -40,6 +40,7 @@ test('composition selection is submitted for generation and refinement', async (
   assert.equal(requests[0].payload.composition, 'diagonal')
   assert.equal(requests[1].payload.composition, 'diagonal')
   assert.ok(requests.every(r => r.payload.reasoningEffort === 'high'))
+  assert.ok(requests.every(r => r.payload.cabinetIds.join() === 'second,first'))
 })
 
 test('generation displays a pending indicator and restores the button on success and failure', async () => {

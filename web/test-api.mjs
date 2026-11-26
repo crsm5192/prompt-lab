@@ -140,6 +140,44 @@ test('thinking effort reaches model calls, including repairs and reverse, and de
   } finally { await f.close() }
 })
 
+test('cabinet entries persist and ordered prefixes coexist with blended directions, repairs and Layout', async () => {
+  const f = await fixture()
+  try {
+    const write = async body => (await f.api('/api/cabinet', body)).body
+    const add = async (name, mode, text) => (await write({ action: 'create', name, mode, text })).items.at(-1)
+    const ink = await add('Ink', 'blend', 'Use sparing ink washes')
+    const first = await add('Trigger', 'prefix', '@tnari_style')
+    const second = await add('Stock', 'prefix', '(grain:1.2)')
+    const cabinetIds = [second.id, ink.id, first.id]
+    const edited = (await write({ ...ink, action: 'update', text: 'Use pale ink washes' })).items[0]
+    assert.equal((await f.api('/api/cabinet', { ...ink, action: 'delete' })).status, 409)
+    assert.equal(JSON.parse(readFileSync(join(f.logDir, '..', 'prompt-cabinet.json')))[0].text, edited.text)
+    assert.equal((await f.api('/api/cabinet')).body.items.length, 3)
+    f.state.replies.push({ positive: 'solo' }, { positive: good })
+    const gen = await f.api('/api/compose', { family: 'anima', brief: 'A reader', cabinetIds, verifyAnchors: false })
+    assert.equal(gen.status, 200)
+    assert.ok(gen.body.positive.startsWith('(grain:1.2), @tnari_style, '))
+    assert.equal(f.state.requests.length, 2)
+    for (const req of f.state.requests) {
+      const user = req.messages.at(-1).content
+      assert.ok(user.includes(edited.text))
+      assert.ok(!user.includes(first.text) && !user.includes(second.text))
+    }
+    const draft = { width: 512, height: 512, bbox_coord_space: 'abs', bbox_format: 'xyxy', summary: { caption: 'A cup.' },
+      items: [{ label: 'object', caption: 'A cup.', bbox: [0, 0, 128, 256] }] }
+    f.state.replies.push({ positive: JSON.stringify(draft) })
+    const refine = await f.api('/api/compose', { mode: 'refine', family: 'moss', source: 'Keep the Layout of the cup.', cabinetIds })
+    assert.equal(refine.status, 200)
+    const layout = JSON.parse(refine.body.positive)
+    assert.equal(layout.summary.caption, '(grain:1.2), @tnari_style, A cup.')
+    assert.deepEqual(layout.items[0].bbox, [-256, -256, 0, -128])
+    assert.equal((await write({ ...edited, action: 'delete' })).items.length, 2)
+    const before = f.state.chatCalls
+    assert.equal((await f.api('/api/compose', { family: 'anima', brief: 'A reader', cabinetIds })).status, 400)
+    assert.equal(f.state.chatCalls, before)
+  } finally { await f.close() }
+})
+
 test('art direction follows the selected mode across the default families', () => {
   for (const family of Object.values(rules.families)) {
     for (const mode of ['gen', 'refine']) {

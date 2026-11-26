@@ -24,6 +24,7 @@ import { fileURLToPath } from 'node:url'
 import { createLLM } from './llm.js'
 import { createViking, createBooru } from './services.js'
 import { createSettings } from './settings.js'
+import { createCabinet, prependEntries } from './cabinet.js'
 import { searchCharacter, verifyAnchors, applyAnchorFix } from './character.js'
 import { detectRefusal, extractTagsFromVlm } from './vlm.js'
 import { createRuleStore } from './rule-store.js'
@@ -61,6 +62,7 @@ const RULES_WRITE_PATH = process.env.RULES_WRITE_PATH || ''
 
 // 运行时设置：LLM 的 URL / key / 模型可在界面里改，改完立即生效（无需重启）
 const settingsDir = process.env.SETTINGS_DIR || join(HERE, 'data')
+const cabinet = createCabinet(join(settingsDir, 'prompt-cabinet.json'))
 const ruleStore = createRuleStore({ readPath: rulesPath, writePath: RULES_WRITE_PATH, backupDir: join(settingsDir, 'rules-backups') })
 let rules = ruleStore.refresh()
 const settings = createSettings({ dir: settingsDir, defaults: config.llm })
@@ -161,7 +163,7 @@ function checkLengthAndRepeat(positive, family, notes) {
 
 // ── 核心：生成/润色/迭代/整理 ───────────────────────────────────────────────
 
-async function doComposeOnce(payload, signal) {
+async function doComposeOnce(payload, signal, blend = []) {
   signal?.throwIfAborted()
   const mode = ['gen', 'refine', 'iterate', 'reverse'].includes(payload.mode)
     ? payload.mode : 'gen'
@@ -171,7 +173,11 @@ async function doComposeOnce(payload, signal) {
   const st = styleFor(f, mode)
   const sys = buildSystem(f, mode, rules, asString(payload.hardNote).trim())
   // familyKind 让 buildUser 能判断「上一版形态是否合规」（如 tag+NL 族缺自然语言段）
-  const usr = buildUser({ ...payload, familyKind: asString(f.kind) }, mode)
+  let usr = buildUser({ ...payload, familyKind: asString(f.kind) }, mode)
+  if (blend.length) {
+    usr += '\n【用户从提示词柜选取的风格素材】按目标模型族的写法，把以下素材落实到画面描述中。保留本次明确要求的主体、动作、原文与构图，冲突时以本次明确要求为先。\n'
+      + JSON.stringify(blend)
+  }
 
   const r = await llm.chat({
     system: sys,
@@ -560,9 +566,14 @@ async function organizeWithLlm({ family, tags, sentences, note, hardNote, model,
 }
 
 // Validate the completed output, including salvage and reverse paths.
-function finishResult(result, family, retried = false, payload = {}, repairAttempts = retried ? 1 : 0) {
+function finishResult(result, family, retried = false, payload = {}, repairAttempts = retried ? 1 : 0, prefixes = []) {
   result.notes = Array.isArray(result.notes) ? result.notes : []
   try { compileResultLayout(result, family) } catch (e) { throw Object.assign(e, { status: 502 }) }
+  if (prefixes.length && !validateOutput(result.positive, family, result.params).unusable) {
+    result.positive = prependEntries(result.positive, prefixes, family)
+    result.length = measureLength(result.positive, family, rules)
+    if (result.length?.warn || result.length?.over) result.notes.push(`含柜中前缀共约 ${result.length.value} token，建议上限 ${result.length.targetMax}。`)
+  }
   result.validation = { ...validateOutput(result.positive, family, result.params), retried }
   result.quality = { ...reviewPrompt(result, family, payload), retried, repairAttempts }
   if (result.validation.unusable) throw Object.assign(new Error('模型未返回可用提示词'), { status: 502 })
@@ -579,9 +590,12 @@ function finishResult(result, family, retried = false, payload = {}, repairAttem
 }
 
 async function doCompose(payload, { signal } = {}) {
-  validateTask(payload)
+  const mode = validateTask(payload)
+  const selected = cabinet.select(payload.cabinetIds, mode)
+  const blend = selected.filter(entry => entry.mode === 'blend').map(entry => entry.text)
+  const prefixes = selected.filter(entry => entry.mode === 'prefix').map(entry => entry.text)
   const family = familyOf(payload.family)
-  let result = await doComposeOnce(payload, signal)
+  let result = await doComposeOnce(payload, signal, blend)
   const first = result
   let repairAttempts = 0
   let stalled = 0
@@ -602,7 +616,7 @@ async function doCompose(payload, { signal } = {}) {
         + (quality.budget?.enforced ? `\n【完整重组验收】第 ${repairAttempts} 次重组，当前约 ${quality.approximateTokens} token。保留上一版全部画面事实、本轮反馈、触发词和引用文字；标签与正文共计 ≤ ${quality.budget.maxTokens} 个应用估算 token，英文优先约 ${Math.floor(quality.budget.maxTokens * targetRatio / 1.45)} 词。重新写一份自洽最终状态，移除旧错误表达与同义重复，不追加补丁，不机械截断，不改采样参数。` : '')
         + (quality.budget?.enforced ? '\n反馈重点保护的细节沿用原文具体称谓，不能将其泛化；核对数量、形状、接触和相对位置，先省通用修饰，不改物件或文字落位、不补新视线。' : '')
         + (overBudget && repairAttempts > 1 ? '\n【切换重组策略】前轮仍超预算，不能只沿用长句骨架换几个词。先在内部整合主体、动作接触、服装、构图和光影的最终事实，再从头组织简洁正文；将同一物件的属性并入同一处，标签与正文不重复整套清单，省去通用修饰，用紧凑分句承载不同细节。超限只说明本轮仍需优化，继续重写到预算内。' : '')
-      const corrected = await doComposeOnce({ ...payload, formatRepair: repair, hardNote: [payload.hardNote, repair].filter(Boolean).join('\n') }, signal)
+      const corrected = await doComposeOnce({ ...payload, formatRepair: repair, hardNote: [payload.hardNote, repair].filter(Boolean).join('\n') }, signal, blend)
       signal?.throwIfAborted()
       corrected.llmMs += result.llmMs || 0
       if (quality.budget?.enforced) corrected.params = first.params
@@ -621,7 +635,7 @@ async function doCompose(payload, { signal } = {}) {
       break
     }
   }
-  const finished = finishResult(result, family, repairAttempts > 0, payload, repairAttempts)
+  const finished = finishResult(result, family, repairAttempts > 0, payload, repairAttempts, prefixes)
   if (finished.quality.budget?.enforced) {
     const before = Math.max(measureLength(payload.positive, family)?.value || 0, first.length?.value || 0)
     if (before > finished.quality.budget.maxTokens) finished.notes.unshift(`已按迭代预算重组正文：约 ${before} → ${finished.length.value} token，上限 ${finished.quality.budget.maxTokens}；保留原设定与本轮修改。`)
@@ -672,6 +686,16 @@ const wrap = (fn) => async (req, res) => {
 //   - GET 只回「有没有 key」和掩码，绝不回真值
 //   - POST 接受 apiKey，但原样回传掩码时表示「不修改」
 //   - 密钥落单独文件（权限 600），不写进 settings.json
+
+app.get('/api/cabinet', wrap(async (_req, res) => {
+  res.json({ ok: true, items: cabinet.list() })
+}))
+
+app.post('/api/cabinet', wrap(async (req, res) => {
+  const body = req.body || {}
+  if (!['create', 'update', 'delete'].includes(body.action)) throw inputError('未知的提示词柜操作')
+  res.json({ ok: true, items: cabinet.change(body.action, body) })
+}))
 
 app.get('/api/settings', wrap(async (_req, res) => {
   res.json({ ok: true, ...settings.publicView() })

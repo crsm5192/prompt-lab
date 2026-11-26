@@ -105,6 +105,12 @@
   .btn[data-running]::before { content: ""; display: inline-block; vertical-align: -2px; margin-right: 7px; width: 12px; height: 12px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: sp .8s linear infinite; }
   .btn[data-running]:disabled { opacity: .9; cursor: progress; }
   .task-progress { display: flex; align-items: center; gap: 8px; color: var(--text); font-size: 13px; margin-bottom: 10px; }
+  .cabinet-head, .cabinet-item { display: flex; gap: 8px; align-items: center; justify-content: space-between; }
+  .cabinet-head h3, .cabinet-item label { margin: 0; }
+  .cabinet-item { padding: 6px 0; border-bottom: 1px solid var(--border); }
+  .cabinet-item label { flex: 1; min-width: 0; color: var(--text); overflow-wrap: anywhere; cursor: pointer; }
+  .cabinet-item input { width: auto; margin-right: 6px; }
+  #cabinetList { margin: 6px 0; max-height: 240px; overflow-y: auto; }
   #taskElapsed { color: var(--dim); font-variant-numeric: tabular-nums; }
   @media (prefers-reduced-motion: reduce) { .spin, .btn[data-running]::before { animation: none; } }
   .hidden { display: none !important; }
@@ -216,6 +222,20 @@
         <div class="hint" style="margin-top:6px">生成与润色按题材设计焦点、光色和材质。明确的动作、机位与画幅优先；反推保留原图，迭代按反馈修改。</div>
       </div>
 
+      <div class="card">
+        <div class="cabinet-head"><h3>提示词柜</h3><button class="btn" id="cabinetNew">添加条目</button></div>
+        <div id="cabinetList"></div>
+        <div class="hint">模型生成、润色时按勾选顺序应用，可混用前置与融合条目。</div>
+        <form id="cabinetEditor" class="hidden">
+          <label for="cabinetName">条目名称</label><input id="cabinetName" maxlength="100" required>
+          <label for="cabinetText">提示词内容</label><textarea id="cabinetText" maxlength="8000" required></textarea>
+          <label for="cabinetMode">用法</label>
+          <select id="cabinetMode"><option value="blend">规则融合 · 画风、光线、材质</option><option value="prefix">原样前置 · 触发词、固定标签</option></select>
+          <div class="row"><button class="btn" type="submit" id="cabinetSave">保存</button><button class="btn" type="button" id="cabinetCancel">取消</button><button class="btn" type="button" id="cabinetDelete">删除</button></div>
+        </form>
+        <div class="hint" role="status" id="cabinetMessage"></div>
+        <button class="chip hidden" id="cabinetReload">重新载入</button>
+      </div>
       <div class="card">
         <h3>高级</h3>
         <label for="model">文本模型</label>
@@ -458,6 +478,7 @@ const state = {
   imageB64: null,
   imageName: '',
   result: null,
+  cabinetIds: [],
 };
 
 
@@ -566,6 +587,7 @@ function renderFams() {
 // ── 页签 ───────────────────────────────────────────────────────────────────
 function setTab(tab) {
   state.tab = tab;
+  $('cabinetList').parentElement.classList.toggle('hidden', !['gen', 'refine'].includes(tab));
   $('composition').disabled = !['gen', 'refine'].includes(tab);
   document.querySelectorAll('.tab').forEach((t) => {
     t.classList.toggle('on', t.dataset.tab === tab);
@@ -874,14 +896,14 @@ async function run(kind) {
         mode: 'gen', family: state.family,
         brief: $('brief').value, base: $('base').value,
         composition: $('composition').value,
-        ...modelOptions, hardNote,
+        ...modelOptions, hardNote, cabinetIds: state.cabinetIds,
       });
     } else if (kind === 'refine') {
       r = await post('/compose', {
         mode: 'refine', family: state.family,
         source: $('source').value, base: $('refBase').value,
         composition: $('composition').value,
-        ...modelOptions, hardNote,
+        ...modelOptions, hardNote, cabinetIds: state.cabinetIds,
       });
     } else if (kind === 'iterate') {
       r = await post('/compose', {
@@ -1468,6 +1490,94 @@ async function initFams() {
   await refreshModelSelect({ models: cfg.models || [], defaultModel: cfg.defaultModel });
   return cfg;
 }
+
+let cabinetItems = [];
+let editingEntry = null;
+let savingCabinet = false;
+
+function renderCabinet() {
+  const list = $('cabinetList');
+  list.replaceChildren();
+  state.cabinetIds = state.cabinetIds.filter(id => cabinetItems.some(entry => entry.id === id));
+  for (const entry of cabinetItems) {
+    const row = document.createElement('div');
+    row.className = 'cabinet-item';
+    const label = document.createElement('label');
+    label.title = entry.text;
+    const check = document.createElement('input');
+    check.type = 'checkbox';
+    check.checked = state.cabinetIds.includes(entry.id);
+    check.onchange = () => {
+      state.cabinetIds = state.cabinetIds.filter(id => id !== entry.id);
+      if (check.checked) state.cabinetIds.push(entry.id);
+      renderCabinet();
+      list.querySelectorAll('input')[cabinetItems.indexOf(entry)]?.focus();
+    };
+    const order = state.cabinetIds.indexOf(entry.id);
+    label.append(check, (order < 0 ? '' : (order + 1) + '. ') + entry.name);
+    const mode = document.createElement('span');
+    mode.className = 'hint';
+    mode.textContent = entry.mode === 'prefix' ? '前置' : '融合';
+    const edit = document.createElement('button');
+    edit.className = 'chip';
+    edit.textContent = '编辑';
+    edit.setAttribute('aria-label', '编辑 ' + entry.name);
+    edit.onclick = () => editCabinet(entry);
+    row.append(label, mode, edit);
+    list.append(row);
+  }
+  if (!cabinetItems.length) list.textContent = '还没有条目';
+}
+function editCabinet(entry) {
+  editingEntry = entry;
+  $('cabinetName').value = entry?.name || '';
+  $('cabinetText').value = entry?.text || '';
+  $('cabinetMode').value = entry?.mode || 'blend';
+  $('cabinetDelete').classList.toggle('hidden', !entry);
+  $('cabinetEditor').classList.remove('hidden');
+  $('cabinetName').focus();
+}
+async function loadCabinet() {
+  try {
+    cabinetItems = (await api('/cabinet')).items;
+    renderCabinet();
+    $('cabinetEditor').classList.add('hidden');
+    $('cabinetReload').classList.add('hidden');
+    $('cabinetMessage').textContent = '';
+  } catch (e) {
+    $('cabinetMessage').textContent = '提示词柜读取失败。' + e.message;
+    $('cabinetReload').classList.remove('hidden');
+  }
+}
+async function saveCabinet(action) {
+  if (savingCabinet) return;
+  savingCabinet = true;
+  const editor = $('cabinetEditor');
+  editor.parentElement.inert = true;
+  try {
+    cabinetItems = (await post('/cabinet', {
+      action, id: editingEntry?.id, version: editingEntry?.version,
+      name: $('cabinetName').value, text: $('cabinetText').value, mode: $('cabinetMode').value,
+    })).items;
+    renderCabinet();
+    editor.classList.add('hidden');
+    $('cabinetReload').classList.add('hidden');
+    $('cabinetMessage').textContent = action === 'delete' ? '已删除' : '已保存';
+  } catch (e) {
+    $('cabinetMessage').textContent = e.message;
+    $('cabinetReload').classList.remove('hidden');
+  } finally {
+    savingCabinet = false;
+    editor.parentElement.inert = false;
+  }
+}
+$('cabinetNew').onclick = () => editCabinet(null);
+$('cabinetReload').onclick = loadCabinet;
+$('cabinetCancel').onclick = () => $('cabinetEditor').classList.add('hidden');
+$('cabinetEditor').onsubmit = event => { event.preventDefault(); saveCabinet(editingEntry ? 'update' : 'create'); };
+$('cabinetDelete').onclick = () => { if (editingEntry && confirm('删除「' + editingEntry.name + '」？')) saveCabinet('delete'); };
+loadCabinet();
+
 
 (async function init() {
   try {
