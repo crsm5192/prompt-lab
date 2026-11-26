@@ -16,6 +16,7 @@
  *   GET  /                    -> 单页界面
  */
 import express from 'express'
+import { taskDiagnostics } from './diagnostics.js'
 import { readFileSync, realpathSync, existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -27,6 +28,7 @@ import { searchCharacter, verifyAnchors, applyAnchorFix } from './character.js'
 import { detectRefusal, extractTagsFromVlm } from './vlm.js'
 import { createRuleStore } from './rule-store.js'
 import { qualityDirection } from './art-direction.js'
+import { assembleNibbles, cleanNibbles, convertNai, nibblesIssues } from './nibbles.js'
 import { reviewPrompt } from './prompt-quality.js'
 import { validateTask, validateOutput, repairInstruction, compileResultLayout, inputError } from './output.js'
 import {
@@ -105,8 +107,13 @@ async function probeWd14() {
 
 function familyOf(id) {
   const fams = rules.families || {}
+  if (typeof id === 'string' && /^(?:nibbles|noob2)$/i.test(id)) id = 'nibbles'
   if (id && !Object.hasOwn(fams, id)) throw inputError(`未知族：${id}`)
   return id ? fams[id] : (Object.hasOwn(fams, 'generic') ? fams.generic : null)
+}
+
+function cleanNegative(text, family) {
+  return family.kind === 'Nibbles' ? cleanNibbles(text) : normalizeSeparators(stripForbidden(text, rules.wording), family)
 }
 
 function familyList() {
@@ -203,7 +210,7 @@ async function doComposeOnce(payload, signal) {
       return {
         ok: true,
         positive,
-        negative: neg ? normalizeSeparators(stripForbidden(neg, rules.wording), f) : '',
+        negative: neg ? cleanNegative(neg, f) : '',
         params: {
           steps: sp.steps || asString(fp.steps),
           cfg: sp.cfg || asString(fp.cfg),
@@ -248,7 +255,7 @@ async function doComposeOnce(payload, signal) {
     }
   }
 
-  const negFinal = normalizeSeparators(stripForbidden(negRaw, rules.wording), f)
+  const negFinal = cleanNegative(negRaw, f)
 
   const len = checkLengthAndRepeat(positive, f, notes)
 
@@ -383,7 +390,7 @@ async function reverseByVlm(payload, f) {
     return {
       ok: true,
       positive: finalizeText(fieldText(parsed.positive), f, rules, asString(parsed.negative)),
-      negative: normalizeSeparators(stripForbidden(asString(parsed.negative), rules.wording), f),
+      negative: cleanNegative(asString(parsed.negative), f),
       tags: fieldText(parsed.positive),
       notes: Array.isArray(parsed.notes) ? parsed.notes.slice(0, 4).map(asString) : [],
       characterTag: asString(parsed.characterTag),
@@ -635,6 +642,7 @@ async function doReverse(payload) {
 // ── HTTP ────────────────────────────────────────────────────────────────────
 
 const app = express()
+app.use('/api', taskDiagnostics(join(settingsDir, 'logs')))
 app.use(express.json({ limit: '40mb' }))   // 图片 base64 可能较大
 
 app.use('/api', (_req, _res, next) => { rules = ruleStore.refresh(); next() })
@@ -713,6 +721,33 @@ app.post('/api/camera', wrap(async (req, res) => {
 app.post('/api/cameraFromPrompt', wrap(async (req, res) => {
   const r = cameraFromPrompt(asString(req.body && req.body.text), config.camera)
   res.json({ ok: true, ...r })
+}))
+
+app.post('/api/nibbles/assemble', wrap(async (req, res) => {
+  const family = familyOf('nibbles')
+  try {
+    const result = assembleNibbles(req.body || {})
+    res.json({ ok: true, family: 'nibbles', familyLabel: family.label, ...result })
+  } catch (error) {
+    if (error instanceof RangeError) throw inputError(error.message)
+    throw error
+  }
+}))
+
+app.post('/api/nibbles/convert', wrap(async (req, res) => {
+  const { source, profile = 'native' } = req.body || {}
+  if (typeof source !== 'string' || !source.trim()) throw inputError('请填写 NAI 提示词')
+  if (source.length > 32000) throw inputError('单次转换最多支持 32000 个字符')
+  if (!['native', 'sd'].includes(profile)) throw inputError('未知转换格式')
+  const family = familyOf('nibbles')
+  let result
+  try { result = convertNai(source, profile) } catch (error) {
+    if (error instanceof RangeError) throw inputError(error.message)
+    throw error
+  }
+  const notes = profile === 'sd' ? ['已保留 SD 权重，供解析这种语法的工作流使用。']
+    : ['已转换为 Nibbles 标签，可直接复制，或拿去润色为自然语言。', ...nibblesIssues(result.positive)]
+  res.json({ ok: true, family: 'nibbles', familyLabel: family.label, ...result, notes })
 }))
 
 app.post('/api/compose', wrap(async (req, res) => {

@@ -5,7 +5,7 @@ import { inputError } from './output.js'
 
 const object = (v) => v && typeof v === 'object' && !Array.isArray(v)
 const strings = (v) => Array.isArray(v) && v.every((s) => typeof s === 'string')
-const KINDS = new Set(['tag', 'tag+NL', 'NL', 'NL+layout'])
+const KINDS = new Set(['tag', 'tag+NL', 'NL', 'NL+layout', 'Nibbles'])
 
 export function validateRules(rules) {
   const reject = (message) => { throw inputError('规则无效：' + message) }

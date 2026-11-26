@@ -1,6 +1,6 @@
 {
   "name": "prompt-lab-web",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
   "description": "提示词工作台 NAS 版 —— 独立 Web 服务，NSFW 反推走本地 WD14",

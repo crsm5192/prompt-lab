@@ -157,6 +157,28 @@
       <div class="card">
         <h3>目标模型族</h3>
         <div class="fams" id="fams"></div>
+        <div id="nibblesOptions" class="hidden">
+          <label for="nibMedium">媒介</label>
+          <select id="nibMedium"><option value="">跟随输入</option><option value="anime">动漫插画</option><option value="photo">摄影</option></select>
+          <label for="nibArtists">画师（可选，多个用逗号分隔）</label>
+          <input id="nibArtists" placeholder="@artist one, @artist two">
+          <label for="nibYear">年份（可选）</label>
+          <input id="nibYear" inputmode="numeric" maxlength="4" placeholder="2025">
+          <label for="nibLanguage">提示词语言</label>
+          <select id="nibLanguage"><option value="">按需求决定</option><option>中文</option><option>日本語</option><option>English</option></select>
+          <label for="nibSize">画幅</label>
+          <select id="nibSize"><option value="">跟随输入</option><option value="1536x896">横图 · 1536 × 896</option><option value="896x1536">竖图 · 896 × 1536</option><option value="1280x1280">方图 · 1280 × 1280</option></select>
+          <label for="nibQuality">画质</label>
+          <select id="nibQuality"><option value="">跟随输入</option><option>best quality</option><option>good quality</option><option>low quality</option><option>worst quality</option></select>
+          <label for="nibComplexity">视觉复杂度</label>
+          <select id="nibComplexity"><option value="">跟随输入</option><option>low visual complexity</option><option>high visual complexity</option></select>
+          <label><input type="checkbox" id="nibBoxes" style="width:auto"> 用 bbox 指定局部位置（8ep / 1124）</label>
+          <div id="nibBoxFields" class="hidden">
+            <label for="nibBoxText">局部定位（坐标范围 0–1000）</label>
+            <textarea id="nibBoxText" class="mono" placeholder="[bbox:60,140,430,930] 左侧人物撑着一把蓝伞;"></textarea>
+          </div>
+          <div class="row"><button class="btn" id="openNai">转换 NAI 标签</button></div>
+        </div>
       </div>
 
       <div class="card">
@@ -232,6 +254,7 @@
         <input id="base" placeholder="例：my_oc, blue dress">
         <div class="row">
           <button class="btn primary" id="runGen">生成提示词</button>
+          <button class="btn hidden" id="runAssemble" title="保留输入正文，按所选格式编排，无需文本模型">本地编排</button>
         </div>
       </div>
 
@@ -267,6 +290,11 @@
         <h3>② 润色</h3>
         <label>待润色的原始提示词</label>
         <textarea id="source" class="mono" placeholder="粘贴已有提示词"></textarea>
+        <div id="naiControls" class="hidden">
+          <label for="naiProfile">NAI 标签转换格式</label>
+          <select id="naiProfile"><option value="native">Nibbles 原生（8ep / 1124，去除权重）</option><option value="sd">SD 权重兼容（保留数值与括号层级）</option></select>
+          <div class="row"><button class="btn" id="runNai">转换标签</button><span class="hint">无需调用文本模型</span></div>
+        </div>
         <label>必须保留的基底词 / 触发词（可选）</label>
         <input id="refBase" placeholder="LoRA 触发词等">
         <div class="row"><button class="btn primary" id="runRefine">润色</button></div>
@@ -423,7 +451,10 @@ const state = {
 async function api(path, opts) {
   const res = await fetch(ROUTE + path, opts);
   const j = await res.json().catch(() => ({}));
-  if (!res.ok || (!j.ok && path !== '/probe')) throw new Error(j.error || ('HTTP ' + res.status));
+  if (!res.ok || (!j.ok && path !== '/probe')) {
+    const id = j.requestId || res.headers?.get('X-Request-ID');
+    throw new Error((j.error || ('HTTP ' + res.status)) + (id ? '（请求编号 ' + id + '）' : ''));
+  }
   return j;
 }
 const post = (path, body) => api(path, {
@@ -438,7 +469,7 @@ function setStatus(text, kind) {
   el.style.color = kind === 'err' ? 'var(--err)' : kind === 'ok' ? 'var(--ok)' : 'var(--dim)';
 }
 function busy(b) {
-  document.querySelectorAll('button.btn.primary').forEach((x) => { x.disabled = b; });
+  document.querySelectorAll('button.btn.primary, #runAssemble, #runNai').forEach((x) => { x.disabled = b; });
   setStatus(b ? '处理中…' : '就绪', b ? '' : 'ok');
 }
 /**
@@ -485,6 +516,9 @@ function legacyCopy(s) {
 function renderFams() {
   const box = $('fams');
   box.innerHTML = '';
+  for (const id of ['nibblesOptions', 'naiControls', 'runAssemble']) {
+    $(id)?.classList.toggle('hidden', state.family !== 'nibbles');
+  }
   state.families.forEach((f) => {
     const b = document.createElement('button');
     b.className = 'fam' + (state.family === f.id ? ' on' : '');
@@ -777,30 +811,50 @@ async function run(kind) {
   busy(true);
   try {
     let r;
-    if (kind === 'gen') {
+    let hardNote = $('hardNote').value;
+    if (state.family === 'nibbles') {
+      const preferences = [
+        ['提示词语言', 'nibLanguage'], ['画布尺寸（同步写入 params.size）', 'nibSize'],
+        ['画质', 'nibQuality'], ['视觉复杂度', 'nibComplexity'], ['画师', 'nibArtists'], ['年份', 'nibYear']
+      ].filter(([, id]) => $(id).value).map(([name, id]) => name + '：' + $(id).value);
+      if ($('nibMedium').value) preferences.push('媒介：' + ($('nibMedium').value === 'anime' ? '动漫插画' : '摄影'));
+      if ($('nibBoxes').checked) preferences.push('使用 [bbox:x1,y1,x2,y2] 局部描述; 对关键区域定位。' + $('nibBoxText').value);
+      hardNote = [hardNote, ...preferences].filter(Boolean).join('\n');
+    }
+    if (kind === 'assemble') {
+      if ($('nibBoxes').checked && !$('nibBoxText').value.trim()) throw new Error('请填写局部定位框，或取消 bbox 选项');
+      r = await post('/nibbles/assemble', {
+        brief: [$('brief').value, $('base').value].filter(Boolean).join('\n'),
+        medium: $('nibMedium').value, language: $('nibLanguage').value, artists: $('nibArtists').value,
+        year: $('nibYear').value, quality: $('nibQuality').value, complexity: $('nibComplexity').value,
+        size: $('nibSize').value, boxes: $('nibBoxes').checked ? $('nibBoxText').value : ''
+      });
+    } else if (kind === 'convert') {
+      r = await post('/nibbles/convert', { source: $('source').value, profile: $('naiProfile').value });
+    } else if (kind === 'gen') {
       r = await post('/compose', {
         mode: 'gen', family: state.family,
         brief: $('brief').value, base: $('base').value,
         composition: $('composition').value,
-        model: $('model').value, hardNote: $('hardNote').value,
+        model: $('model').value, hardNote,
       });
     } else if (kind === 'refine') {
       r = await post('/compose', {
         mode: 'refine', family: state.family,
         source: $('source').value, base: $('refBase').value,
         composition: $('composition').value,
-        model: $('model').value, hardNote: $('hardNote').value,
+        model: $('model').value, hardNote,
       });
     } else if (kind === 'iterate') {
       r = await post('/compose', {
         mode: 'iterate', family: state.family,
         positive: $('iterPos').value, negative: $('iterNeg').value,
         feedback: $('feedback').value,
-        model: $('model').value, hardNote: $('hardNote').value,
+        model: $('model').value, hardNote,
       });
     } else if (kind === 'reverse') {
       const payload = { family: state.family, model: $('model').value,
-        organize: $('organize').checked, hardNote: $('hardNote').value,
+        organize: $('organize').checked, hardNote,
         engine: $('engine').value };
       if (state.imageB64) payload.imageB64 = state.imageB64;
       else if ($('imgPath').value.trim()) payload.path = $('imgPath').value.trim();
@@ -822,6 +876,10 @@ async function run(kind) {
 }
 
 $('runGen').onclick = () => run('gen');
+$('runAssemble').onclick = () => run('assemble');
+$('nibBoxes').onchange = () => $('nibBoxFields').classList.toggle('hidden', !$('nibBoxes').checked);
+$('openNai').onclick = () => { setTab('refine'); $('source').focus(); };
+$('runNai').onclick = () => run('convert');
 $('runRefine').onclick = () => run('refine');
 $('runIterate').onclick = () => run('iterate');
 $('runReverse').onclick = () => run('reverse');
@@ -977,7 +1035,7 @@ function tagOutName() {
   const f = state.families.find((x) => x.id === state.family);
   const raw = tagState.name;
   // 与后端 normalizeSeparators 保持一致：kind=tag 且未声明 separator 时保留下划线
-  const useSpace = f && (f.kind === 'tag+NL' || f.kind === 'NL');
+  const useSpace = f && ['tag+NL', 'NL', 'Nibbles'].includes(f.kind);
   return useSpace ? raw.replace(/_/g, ' ') : raw;
 }
 $('tagCopy').onclick = () => copy(tagOutName());
@@ -1377,7 +1435,9 @@ async function initFams() {
   try {
     const cfg = await api('/config');
     state.families = cfg.families || [];
-    state.family = state.families[0] ? state.families[0].id : 'generic';
+    const requested = new URLSearchParams(window.location.search).get('family') || '';
+    const familyId = /^(nibbles|noob2)$/i.test(requested) ? 'nibbles' : requested;
+    state.family = (state.families.find((f) => f.id === familyId) || state.families[0])?.id || 'generic';
     state.camCfg = cfg.camera;
     renderFams();
 

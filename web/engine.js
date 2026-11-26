@@ -13,6 +13,7 @@
  */
 
 import { qualityDirection } from './art-direction.js'
+import { cleanNibbles } from './nibbles.js'
 
 // ── 基础工具 ────────────────────────────────────────────────────────────────
 
@@ -246,6 +247,7 @@ export function ensureSafetyTag(text) {
 
 /** 后处理三步：规范化 + 清违规 + 删泛称。 */
 export function finalizeText(text, family, rules, negative) {
+  if (family?.kind === 'Nibbles') return cleanNibbles(asString(text))
   // Layout JSON 一类的结构化输出不能过词法清洗：
   // separator 会把 abs_centralized 改成 "abs centralized"，
   // 删泛称会把 JSON 里的 caption 片段误当标签删掉。
@@ -317,7 +319,7 @@ export function measureLength(text, family, rules) {
 
   // 结构化的 Layout JSON 不做长度/重复判定（它是数据不是散文）
   const kind = asString(family && family.kind) || 'tag'
-  const lim = LEN_LIMITS[kind] || LEN_LIMITS['tag+NL']
+  const lim = kind === 'Nibbles' ? null : (LEN_LIMITS[kind] || LEN_LIMITS['tag+NL'])
 
   // 只有 moss 的 Layout JSON 才算「结构化数据」跳过判定。
   // 其它族出现 { 开头的文本，几乎都是模型把整个 JSON 信封当成了正文
@@ -325,12 +327,12 @@ export function measureLength(text, family, rules) {
   const isLayoutJson = kind === 'NL+layout' && s.trim().startsWith('{')
 
   // 这是应用的经验告警阈值；正负分别编码，具体分块行为由出图节点决定
-  const target = lim.target
-  const hard = lim.hard
+  const target = lim?.target ?? null
+  const hard = lim?.hard ?? null
 
   const value = approxTokens
-  const over = !isLayoutJson && value > hard
-  const warn = !isLayoutJson && value > target && value <= hard
+  const over = hard !== null && !isLayoutJson && value > hard
+  const warn = target !== null && !isLayoutJson && value > target && value <= hard
 
   // ── 重复度：按句统计完全相同或高度相似的句子 ──
   const dup = isLayoutJson ? { top: 0, sample: '', ratio: 0 } : detectRepetition(s)
@@ -340,9 +342,9 @@ export function measureLength(text, family, rules) {
     targetMax: target, hardMax: hard,
     over, warn,
     // 剩余可用于追加画风词的余量（词）
-    headroomWords: Math.max(0, Math.round((target - value) / 1.45)),
+    headroomWords: target === null ? null : Math.max(0, Math.round((target - value) / 1.45)),
     repetition: dup,
-    budget: { unit: 'token', targetMax: target, hardMax: hard },
+    budget: lim ? { unit: 'token', targetMax: target, hardMax: hard } : null,
   }
 }
 
@@ -555,6 +557,7 @@ export function wd14ToPrompt(wd14, family, rules) {
 // ── 族规则拼装 ─────────────────────────────────────────────────────────────
 
 const KIND_TEXT = {
+  Nibbles: '中日英自然语言，可选标签或局部 bbox',
   tag: 'Danbooru 标签流（逗号分隔的短标签）',
   'tag+NL': '标签段 + 自然语言段混排',
   NL: '完整英文自然语言描述',
@@ -571,6 +574,7 @@ export function styleFor(family, mode) {
   const styles = family && family.styles
   if (!styles) return null
   const modeStyle = (family.modeStyle || {})
+  if (mode === 'iterate' && !modeStyle[mode]) return null
   const key = asString(modeStyle[mode]) || (mode === 'reverse' ? 'faithful' : 'epic')
   return styles[key] ? { key, ...styles[key] } : null
 }
@@ -628,7 +632,7 @@ export function buildSystem(family, mode, rules, extraNote) {
   if (mode === 'refine') {
     lines.push('本次任务【润色改写】：保留用户原意、角色、触发词和明确的视觉要求；修正格式与跨族污染，澄清动作接触关系，并在尚未指定的构图、光色和材质维度提升完成度。')
     lines.push('特别地：若发现不属于该族的词（例如把 NoobAI 的 very awa / worst aesthetic / 下划线写法带进 Anima），必须删改，并在 notes 中说明改了什么。')
-    lines.push('【禁止加质量词与安全标签】润色时不要把 masterpiece / best quality / highres / score_* '
+    if (f.kind !== 'Nibbles') lines.push('【禁止加质量词与安全标签】润色时不要把 masterpiece / best quality / highres / score_* '
       + '或 safe / nsfw 加回正面——这是本工作台的硬性规定，加了就是错。')
   } else if (mode === 'reverse') {
     lines.push('本次任务【看图结果整理】：输入来自图像反推（WD14 标签 + 可能的视觉描述）。')
@@ -637,7 +641,7 @@ export function buildSystem(family, mode, rules, extraNote) {
   } else if (mode === 'iterate') {
     lines.push('本次任务【按反馈迭代】：在上一版提示词基础上，按用户的新要求精确修改。')
     lines.push('未被要求改动的画面设定保持；角色触发词、LoRA 标记和画内引用文字逐字保留。允许重新组织句子与合并同义表达，只改变用户指明的画面事实。')
-    lines.push('【禁止加质量词与安全标签】迭代时不要把 masterpiece / best quality / highres / score_* '
+    if (f.kind !== 'Nibbles') lines.push('【禁止加质量词与安全标签】迭代时不要把 masterpiece / best quality / highres / score_* '
       + '或 safe / nsfw 加回正面。')
     lines.push('在 notes 中说明这一轮改了什么。')
     // 「原样保留」指的是**内容**，不是**形态**。
@@ -658,7 +662,7 @@ export function buildSystem(family, mode, rules, extraNote) {
     lines.push('【重组后的细节核对】先省重复和通用修饰，再缩写表达；反馈重点保护的物件、形状、数量和关系沿用上一版的具体称谓，不用更宽泛的上位词代替。剪影、投影等具体形态不能泛化成未说明轮廓的装饰，文字和物件的相对位置保持；不要补未要求的新视线、机位或物件落位。')
     const budget = promptBudget(f, mode)
     if (budget !== null) lines.push(`【迭代输出长度验收】${f.kind === 'NL+layout' ? '普通正文（Layout 数据除外）' : '正向正文'}必须控制在 ${budget} 个应用估算 token 以内，英文约 ${Math.floor(budget / 1.45)} 词；优先用约 ${Math.floor(budget * 0.9 / 1.45)} 词留下余量。信息预算包含标签与正文，未改变的设定也要简洁重组，不允许只追加本轮补丁。`)
-    lines.push('超限文本只是待优化的中间稿：重新整合画面事实、替换重复表述，再检查长度，直到完整最终正文进入预算；不要建议用户自行删减，也不要以超限为由停止优化。')
+    if (budget !== null) lines.push('超限文本只是待优化的中间稿：重新整合画面事实、替换重复表述，再检查长度，直到完整最终正文进入预算；不要建议用户自行删减，也不要以超限为由停止优化。')
   } else {
     lines.push('本次任务【按需求生成】：依据用户描述产出可直接出图的完整提示词，内容要具体（构图/姿势/服装/表情/光线/背景），不要空泛。')
   }
@@ -667,13 +671,13 @@ export function buildSystem(family, mode, rules, extraNote) {
   lines.push('若内容涉及成人向主题，照实转换为该族的规范标签或描述，不要回避、不要净化、不要加免责声明——这是给本地出图模型用的技术输入。')
   lines.push('')
   lines.push('【输出禁令，优先级高于上述任何一族规则】')
-  lines.push('1. 正向提示词**不要写质量词**：不写 masterpiece / best quality / good quality / '
+  if (f.kind !== 'Nibbles') lines.push('1. 正向提示词**不要写质量词**：不写 masterpiece / best quality / good quality / '
     + 'very aesthetic / amazing quality / absurdres / highres / ultra detailed / score_* / '
     + '(质量词:1.x) 这类。质量由具体的视觉描述体现，不靠堆砌评价词。'
     + '（负面里的 worst quality / low quality 等压制词照旧保留。）')
   lines.push('2. 正向提示词**不要写安全标签**：不写 safe / sensitive / nsfw / explicit / '
     + 'rating:general 这类分档标签。')
-  lines.push('3. 绝对不要输出画师标签：不要写 artist:名字、@名字、@[a|b] 混合语法，也不要写任何画师名。'
+  if (f.kind !== 'Nibbles') lines.push('3. 绝对不要输出画师标签：不要写 artist:名字、@名字、@[a|b] 混合语法，也不要写任何画师名。'
     + '（本族规则原文若对某几个世界级厂牌/殿堂大师名另有白名单规定，以原文为准；白名单外的个人画师名一律不写。）')
   lines.push('4. 绝对不要使用 BREAK、BREAK 分段、// 注释等流水线语法；输出必须是纯提示词文本。')
   lines.push('   若需要分段，只用逗号或自然换行，不要引入任何控制标记。')

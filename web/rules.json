@@ -46,9 +46,23 @@
       "modeStyle": {
         "reverse": "faithful",
         "gen": "epic",
-        "refine": "epic",
-        "iterate": "epic"
+        "refine": "epic"
       }
+    },
+    "nibbles": {
+      "label": "Nibbles / Noob2",
+      "kind": "Nibbles",
+      "negative": "",
+      "order": "媒介与指定风格 → 全局构图 → 逐个主体的可见动作、光色与画内文字 → 可选局部 bbox",
+      "rules": [
+        "按用户指定语言输出，支持中文、日文、英文和混写。未指定时用英文自然语言。画内文字保留原语言、引号内逐字照录。需要标签时用空格分词，写足场景内容。",
+        "动漫插画在开头点明 anime illustration 或对应语言的动漫插画。照片用摄影描述开头。仅使用用户指定的画师和年份，多画师用 by @artist one and @artist two，年份用 in 2025 或 year 2025。角色与作品明确时用 Name from Work 或对应语言的写法。",
+        "质量可选 best quality / good quality / low quality / worst quality，复杂度可选 high visual complexity / low visual complexity。两个维度独立，每个最多一个，在开头各写一次，可用对应语言表达。未指定的维度省略，不叠加 SDXL 质量词。",
+        "先定取景、主体占比和遮挡，再逐人绑定服装、动作、视线和道具。画内文字注明原文、位置和载体。摄影写明可见光源和材质。",
+        "8ep / 1124 用自然语言强调重点。需定位时用全局描述加局部段落，每框独立写 [bbox:x1,y1,x2,y2] 局部描述; 。左上为原点，整数范围 0–1000，左 < 右且上 < 下。保持用户已有框。其它版本的 bbox 表现待验证。",
+        "用户指定画幅优先。需要推荐尺寸时可按构图选横 1536x896、竖 896x1536 或方 1280x1280。未提供的步数、CFG、采样器留空。反推按可见内容描述，不能从图像推断画师、年份或原始采样参数。"
+      ],
+      "sharedBlocks": ["anatomySpatialDiscipline", "artCompositionDiscipline"]
     },
     "anima": {
       "label": "Anima",
@@ -103,11 +117,10 @@
         }
       },
       "modeStyle": {
-        "_comment": "按任务模式自动选版：反推用忠实还原，生成/润色/迭代用震撼美化。",
+        "_comment": "按任务模式自动选版：反推用忠实还原，生成和润色用艺术增强，迭代跟随本轮反馈。",
         "reverse": "faithful",
         "gen": "epic",
-        "refine": "epic",
-        "iterate": "epic"
+        "refine": "epic"
       },
       "params": {
         "steps": "30-50（Turbo 8-12）",
@@ -168,11 +181,10 @@
         }
       },
       "modeStyle": {
-        "_comment": "按任务模式自动选版：反推用忠实还原，生成/润色/迭代用增强版。",
+        "_comment": "按任务模式自动选版：反推用忠实还原，生成和润色用艺术增强，迭代跟随本轮反馈。",
         "reverse": "faithful",
         "gen": "epic",
-        "refine": "epic",
-        "iterate": "epic"
+        "refine": "epic"
       },
       "params": {
         "steps": "Turbo 8 / Raw 20-52",
@@ -226,8 +238,7 @@
       "modeStyle": {
         "reverse": "faithful",
         "gen": "epic",
-        "refine": "epic",
-        "iterate": "epic"
+        "refine": "epic"
       }
     },
     "moss": {
@@ -285,11 +296,10 @@
         }
       },
       "modeStyle": {
-        "_comment": "反推用忠实还原，生成/润色/迭代用增强版。",
+        "_comment": "反推用忠实还原，生成和润色用艺术增强，迭代跟随本轮反馈。",
         "reverse": "faithful",
         "gen": "epic",
-        "refine": "epic",
-        "iterate": "epic"
+        "refine": "epic"
       },
       "sharedBlocks": [
         "anatomySpatialDiscipline",

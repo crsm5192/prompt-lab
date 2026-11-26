@@ -8,6 +8,8 @@
  * 所以在界面上改完 URL/key/模型立即生效，不需要重启。
  */
 
+import { logModelCall } from './diagnostics.js'
+
 const DEFAULT_TIMEOUT = 180000
 
 export function normalizeBaseURL(value) {
@@ -83,6 +85,9 @@ export function createLLM(provider) {
     const timer = setTimeout(() => ctrl.abort(), thisTimeout)
     const t0 = Date.now()
     const k = key()
+    const knownModel = model === cfg.defaultModel || cfg.models?.some(m => (m.id || m) === model)
+    const trace = { model: knownModel && /^[\w./:-]{1,96}$/.test(model) ? model : 'custom',
+      input: opts.image ? 'image' : 'text', limit: body.max_tokens, timeoutMs: thisTimeout, outcome: 'network_error' }
     try {
       const res = await fetch(`${b}/chat/completions`, {
         method: 'POST',
@@ -94,18 +99,26 @@ export function createLLM(provider) {
         signal: ctrl.signal,
       })
 
+      trace.status = res.status
       const text = await res.text()
       if (!res.ok) {
+        trace.outcome = 'gateway_http'
         throw new Error(`模型接口 ${res.status}：${text.slice(0, 300)}`)
       }
       let json
       try {
         json = JSON.parse(text)
       } catch {
+        trace.outcome = 'gateway_non_json'
         throw new Error(`模型返回非 JSON：${text.slice(0, 200)}`)
       }
       const choice = (json.choices && json.choices[0]) || {}
       const content = (choice.message && choice.message.content) || ''
+      trace.finishReason = ['stop', 'length', 'content_filter', 'tool_calls', 'function_call'].includes(choice.finish_reason) ? choice.finish_reason : 'unknown'
+      trace.contentChars = typeof content === 'string' ? content.length : 0
+      trace.hasReasoning = Boolean(choice.message?.reasoning_content || choice.message?.reasoning)
+      if (Number.isSafeInteger(json.usage?.completion_tokens)) trace.completionTokens = json.usage.completion_tokens
+      trace.outcome = content ? 'ok' : 'model_empty'
       if (!content) throw Object.assign(new Error('模型返回空内容'), { status: 502 })
 
       return {
@@ -115,10 +128,12 @@ export function createLLM(provider) {
         usage: json.usage || null,
       }
     } catch (e) {
+      if (ctrl.signal.aborted) trace.outcome = opts.signal?.aborted ? 'client_cancelled' : 'timeout'
       if (opts.signal?.aborted) throw opts.signal.reason
       if (e.name === 'AbortError') throw new Error(`模型调用超时（${thisTimeout / 1000}s）`)
       throw e
     } finally {
+      logModelCall({ ...trace, ms: Date.now() - t0 })
       clearTimeout(timer)
       opts.signal?.removeEventListener('abort', cancel)
     }

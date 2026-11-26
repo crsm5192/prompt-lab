@@ -1,6 +1,7 @@
 import { fieldText, layoutInstruction } from './engine.js'
 import { normalizeLayoutOutput } from './moss-layout.js'
 import { COMPOSITION_MODES } from './art-direction.js'
+import { nibblesIssues } from './nibbles.js'
 
 export function inputError(message) {
   return Object.assign(new Error(message), { status: 400 })
@@ -47,7 +48,8 @@ export function validateOutput(text, family, params = {}) {
   if (!value.startsWith('{') && /^(?:(?:a|an|the)\s+)?(?:(?:full[- ]body|half[- ]body|close[- ]up|eye[- ]level|wide[- ]angle|vertical|horizontal|detailed|cinematic)\s+){0,4}caption\s+(?:of|depicting|showing)\b/i.test(prose)) {
     issues.push('正文混入了 caption of 等提示词介绍语，应直接描述可见画面')
   }
-  if (/[\u4e00-\u9fff\u3040-\u30ff]/.test(prose) && !value.startsWith('{')) {
+  if (kind === 'Nibbles') issues.push(...nibblesIssues(value))
+  if (kind !== 'Nibbles' && /[\u4e00-\u9fff\u3040-\u30ff]/.test(prose) && !value.startsWith('{')) {
     issues.push('画面描述应使用英文；要渲染的原语言文字请用引号包裹')
   }
   const sentences = prose.match(/[A-Za-z][^.!?\n]{8,}[.!?](?=\s|,|$)/g) || []
@@ -68,6 +70,7 @@ export function repairInstruction(family, issues) {
   return '【本次输出格式验收】' + (issues.length ? issues.join('；') + '。' : '')
     + (family.kind === 'tag+NL' ? 'positive 第一行必须是英文基础标签；然后真换行，写 2–3 句英文画面描述。' : '')
     + (family.kind === 'NL' ? 'positive 必须使用完整英文句子。' : '')
+    + (family.kind === 'Nibbles' ? '按要求使用中日英自然语言，保留指定画师、质量档和引用文字。每个 bbox 后紧跟局部描述及分号。' : '')
     + (family.kind === 'tag' ? 'positive 必须使用逗号分隔的英文短标签。' : '')
     + (family.kind === 'NL+layout' ? layoutInstruction() : '')
     + '正文直接描述可见画面，不用 caption of 等提示词介绍语；用户要求画出的引用文字和 Layout 的 caption 字段保留。'

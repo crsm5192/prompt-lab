@@ -5,7 +5,9 @@ import { spawn } from 'node:child_process'
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { once } from 'node:events'
+import { EventEmitter, once } from 'node:events'
+import { taskDiagnostics } from './diagnostics.js'
+import { buildSystem, buildUser, styleFor } from './engine.js'
 
 const rules = JSON.parse(readFileSync(new URL('./rules.json', import.meta.url)))
 const listen = (server) => new Promise((r) => server.listen(0, '127.0.0.1', () => r(server.address().port)))
@@ -71,10 +73,114 @@ async function fixture(fallbackToWd14 = true, corruptRules = false) {
   }
   const api = async (path, body, options = {}) => {
     const res = await fetch(base + path, { ...(body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }), ...options })
-    return { status: res.status, body: await res.json() }
+    return { status: res.status, body: await res.json(), requestId: res.headers.get('x-request-id') }
   }
-  return { state, api, rulesPath, close }
+  return { state, api, rulesPath, close, logDir: join(dir, 'settings', 'logs') }
 }
+
+test('a task crossing Shanghai midnight writes each event to its own day', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'prompt-log-days-'))
+  try {
+    let clock = new Date('2026-11-26T15:59:59.999Z')
+    const res = Object.assign(new EventEmitter(), { setHeader() {}, writableFinished: true, statusCode: 200 })
+    taskDiagnostics(dir, () => clock)({ method: 'POST', path: '/compose', body: {} }, res, () => {
+      clock = new Date('2026-11-26T16:00:00.001Z')
+      res.emit('close')
+    })
+    const row = day => JSON.parse(readFileSync(join(dir, day + '.jsonl'), 'utf8'))
+    assert.equal(row('2026-11-26').event, 'request_started')
+    assert.equal(row('2026-11-27').event, 'request_finished')
+    assert.equal(row('2026-11-26').requestId, row('2026-11-27').requestId)
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
+test('failed model calls share the UI request ID without recording arbitrary request or upstream text', async () => {
+  const f = await fixture()
+  try {
+    f.state.replies.push({ httpStatus: 429, error: 'private-upstream-marker' })
+    const r = await f.api('/api/compose', { family: 'generic', brief: 'private-scene-marker' })
+    assert.equal(r.body.requestId, r.requestId)
+    assert.match(r.requestId, /^[\da-f-]{36}$/)
+    const { readdirSync } = await import('node:fs')
+    const rows = readdirSync(f.logDir).flatMap(name => readFileSync(join(f.logDir, name), 'utf8').trim().split('\n').map(JSON.parse))
+      .filter(row => row.requestId === r.requestId)
+    assert.deepEqual(rows.map(row => row.event), ['request_started', 'model_call', 'request_finished'])
+    assert.equal(rows[1].status, 429)
+    assert.equal(rows[2].error, 'gateway_http')
+    assert.doesNotMatch(JSON.stringify(rows), /private-|FAKE_TEST_KEY/)
+  } finally { await f.close() }
+})
+
+test('art direction follows the selected mode across the default families', () => {
+  for (const family of Object.values(rules.families)) {
+    for (const mode of ['gen', 'refine']) {
+      assert.match(buildUser({ familyKind: family.kind }, mode), /第一眼要看见/)
+      assert.match(buildUser({ familyKind: family.kind }, mode), /单色、漫射光、平涂/)
+    }
+    assert.equal(styleFor(family, 'iterate'), null)
+    assert.match(buildUser({ familyKind: family.kind }, 'iterate'), /仅在反馈要求的范围内/)
+    assert.match(buildUser({ familyKind: family.kind }, 'reverse'), /忠实反推/)
+    assert.doesNotMatch(buildSystem(family, 'iterate', rules), /【本次风格档：艺术增强/)
+  }
+})
+
+test('Nibbles prompt workflows', async (t) => {
+  const f = await fixture()
+  try {
+    await t.test('Nibbles local assembly and native/SD import work without an LLM', async () => {
+      const before = f.state.chatCalls
+      const api = (path, payload) => f.api('/api/nibbles/' + path, payload)
+      const input = { brief: '少女站在窗边，牌上写着「BLUE_SKY」。', artists: '@a_b, c', year: '2025',
+        size: '896x1536', quality: 'good quality', complexity: 'low visual complexity', boxes: '[bbox:0,0,500,1000] 左侧人物;' }
+      const assembled = await api('assemble', input)
+      assert.equal(assembled.status, 200)
+      assert.match(assembled.body.positive, /@a b 和 @c.*2025.*动漫插画，良好画质，低视觉复杂度/)
+      assert.match(assembled.body.positive, /「BLUE_SKY」/)
+      assert.equal(assembled.body.params.size, '896x1536')
+      assert.match((await api('assemble', { brief: '窓辺に猫が座っている。', medium: 'photo' })).body.positive, /^写真。/)
+      assert.equal((await api('assemble', { ...input, boxes: '[bbox:10,10,1001,500] 人物;' })).status, 400)
+      assert.equal((await api('assemble', { ...input, boxes: '[bbox:10,500,60,400] 人物;' })).status, 400)
+      const japanese = { brief: '駅の看板に「最低画質、視覚的複雑度が低い」と書かれている。', language: '日本語',
+        quality: 'best quality', complexity: 'high visual complexity' }
+      assert.equal((await api('assemble', japanese)).status, 200)
+      for (const extra of ['低画質。', 'low quality.', '視覚的複雑度が低い。', '低视觉复杂度。']) {
+        assert.equal((await api('assemble', { ...japanese, brief: japanese.brief + extra })).status, 400, extra)
+      }
+      const source = '1.50::artist:yoneyama_mai::, {{from_side}}, -0.80::blurry::, 2::blue_hair,white_shirt::, sign "BLUE_SKY, ST_2"'
+      const native = await api('convert', { source })
+      assert.equal(native.body.positive, 'anime illustration, @yoneyama mai, from side, blue hair, white shirt, sign "BLUE_SKY, ST_2"')
+      assert.equal(native.body.negative, 'blurry')
+      const grouped = await api('convert', { source: '{artist:ao_ki, [blue_umbrella, rain]}, {-1::[fog, haze]::}, sign "KEEP_[A,B]"' })
+      assert.equal(grouped.body.positive, 'anime illustration, @ao ki, blue umbrella, rain, sign "KEEP_[A,B]"')
+      assert.equal(grouped.body.negative, 'fog, haze')
+      const sd = await api('convert', { source, profile: 'sd' })
+      assert.equal(sd.body.positive, 'anime illustration, best quality, (@yoneyama mai:1.5), ((from side)), (blue hair,white shirt:2), sign "BLUE_SKY, ST_2"')
+      assert.equal(sd.body.negative, '(blurry:0.8)')
+      assert.equal((await api('convert', { source: 'low quality, best quality' })).status, 400)
+      assert.equal((await api('convert', { source: '' })).status, 400)
+      assert.equal((await api('convert', { source, profile: 'unknown' })).status, 400)
+      assert.equal(f.state.chatCalls, before)
+    })
+    await t.test('Noob2 alias and Nibbles keep author, quality, quoted text and multilingual paragraphs through compose and reverse', async () => {
+      const candidate = 'An anime illustration by @ao_ki in 2025, rated as best quality.\n\n窓辺に青い花瓶がある。「BLUE_SKY」\n\n[bbox:0,100,600,800] 桌上的蓝色花瓶;'
+      const response = { positive: candidate, negative: 'artist:other_name, (blur:1.2)', params: {} }
+      for (const [route, data] of [
+        ['compose', { family: 'Noob2', brief: '中日英混写', verifyAnchors: false }],
+        ['compose', { family: 'nibbles', mode: 'iterate', positive: candidate, feedback: '保留花瓶', verifyAnchors: false }],
+        ['reverse', { family: 'Nibbles', engine: 'vlm', imageB64: 'test' }],
+      ]) {
+        f.state.replies.push(response)
+        const result = await f.api('/api/' + route, data)
+        assert.equal(result.status, 200)
+        assert.equal(result.body.validation.valid, true)
+        assert.equal(result.body.validation.retried, false)
+        assert.equal(result.body.positive, candidate.replace('@ao_ki', '@ao ki'))
+        assert.equal(result.body.negative, '@other name, blur')
+        assert.equal(result.body.length.hardMax, null)
+      }
+    })
+  } finally { await f.close() }
+})
 
 test('API validates inputs, repairs formats, reloads rules and reports unhealthy dependencies', async (t) => {
   const f = await fixture()
