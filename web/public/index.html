@@ -110,7 +110,12 @@
   .cabinet-item { padding: 6px 0; border-bottom: 1px solid var(--border); }
   .cabinet-item label { flex: 1; min-width: 0; color: var(--text); overflow-wrap: anywhere; cursor: pointer; }
   .cabinet-item input { width: auto; margin-right: 6px; }
-  #cabinetList { margin: 6px 0; max-height: 240px; overflow-y: auto; }
+  #cabinetCard { display: flex; flex-direction: column; gap: 6px; max-height: min(20rem, 70vh); }
+  .cabinet-scroll {
+    min-height: 0; overflow-y: auto; scrollbar-gutter: stable;
+    scrollbar-color: var(--dim) var(--layer); overscroll-behavior-y: contain;
+  }
+  .cabinet-scroll:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
   #taskElapsed { color: var(--dim); font-variant-numeric: tabular-nums; }
   @media (prefers-reduced-motion: reduce) { .spin, .btn[data-running]::before { animation: none; } }
   .hidden { display: none !important; }
@@ -163,33 +168,64 @@
     <button class="tab" data-tab="settings">🔌 设置</button>
   </div>
 
+  <div class="card">
+    <h3>目标模型族</h3>
+    <div class="fams" id="fams"></div>
+    <div id="nibblesOptions" class="hidden">
+      <label for="nibMedium">媒介</label>
+      <select id="nibMedium"><option value="">跟随输入</option><option value="anime">动漫插画</option><option value="photo">摄影</option></select>
+      <label for="nibArtists">画师（可选，多个用逗号分隔）</label>
+      <input id="nibArtists" placeholder="@artist one, @artist two">
+      <label for="nibYear">年份（可选）</label>
+      <input id="nibYear" inputmode="numeric" maxlength="4" placeholder="2025">
+      <label for="nibLanguage">提示词语言</label>
+      <select id="nibLanguage"><option value="">按需求决定</option><option>中文</option><option>日本語</option><option>English</option></select>
+      <label for="nibSize">画幅</label>
+      <select id="nibSize"><option value="">跟随输入</option><option value="1536x896">横图 · 1536 × 896</option><option value="896x1536">竖图 · 896 × 1536</option><option value="1280x1280">方图 · 1280 × 1280</option></select>
+      <label for="nibQuality">画质</label>
+      <select id="nibQuality"><option value="">跟随输入</option><option>best quality</option><option>good quality</option><option>low quality</option><option>worst quality</option></select>
+      <label for="nibComplexity">视觉复杂度</label>
+      <select id="nibComplexity"><option value="">跟随输入</option><option>low visual complexity</option><option>high visual complexity</option></select>
+      <label><input type="checkbox" id="nibBoxes" style="width:auto"> 用 bbox 指定局部位置（8ep / 1124）</label>
+      <div id="nibBoxFields" class="hidden">
+        <label for="nibBoxText">局部定位（坐标范围 0–1000）</label>
+        <textarea id="nibBoxText" class="mono" placeholder="[bbox:60,140,430,930] 左侧人物撑着一把蓝伞;"></textarea>
+      </div>
+      <div class="row"><button class="btn" id="openNai">转换 NAI 标签</button></div>
+    </div>
+  </div>
+
   <div class="cols">
     <div>
       <div class="card">
-        <h3>目标模型族</h3>
-        <div class="fams" id="fams"></div>
-        <div id="nibblesOptions" class="hidden">
-          <label for="nibMedium">媒介</label>
-          <select id="nibMedium"><option value="">跟随输入</option><option value="anime">动漫插画</option><option value="photo">摄影</option></select>
-          <label for="nibArtists">画师（可选，多个用逗号分隔）</label>
-          <input id="nibArtists" placeholder="@artist one, @artist two">
-          <label for="nibYear">年份（可选）</label>
-          <input id="nibYear" inputmode="numeric" maxlength="4" placeholder="2025">
-          <label for="nibLanguage">提示词语言</label>
-          <select id="nibLanguage"><option value="">按需求决定</option><option>中文</option><option>日本語</option><option>English</option></select>
-          <label for="nibSize">画幅</label>
-          <select id="nibSize"><option value="">跟随输入</option><option value="1536x896">横图 · 1536 × 896</option><option value="896x1536">竖图 · 896 × 1536</option><option value="1280x1280">方图 · 1280 × 1280</option></select>
-          <label for="nibQuality">画质</label>
-          <select id="nibQuality"><option value="">跟随输入</option><option>best quality</option><option>good quality</option><option>low quality</option><option>worst quality</option></select>
-          <label for="nibComplexity">视觉复杂度</label>
-          <select id="nibComplexity"><option value="">跟随输入</option><option>low visual complexity</option><option>high visual complexity</option></select>
-          <label><input type="checkbox" id="nibBoxes" style="width:auto"> 用 bbox 指定局部位置（8ep / 1124）</label>
-          <div id="nibBoxFields" class="hidden">
-            <label for="nibBoxText">局部定位（坐标范围 0–1000）</label>
-            <textarea id="nibBoxText" class="mono" placeholder="[bbox:60,140,430,930] 左侧人物撑着一把蓝伞;"></textarea>
-          </div>
-          <div class="row"><button class="btn" id="openNai">转换 NAI 标签</button></div>
+        <h3>画面设计</h3>
+        <label>构图偏好</label>
+        <select id="composition">
+          <option value="auto">自动艺术构图</option>
+          <option value="preserve">保留已有构图</option>
+          <option value="negative_space">偏置与留白</option>
+          <option value="diagonal">对角线与动势</option>
+          <option value="framing">框景与空间层次</option>
+          <option value="geometric">几何秩序与节奏</option>
+        </select>
+        <div class="hint" style="margin-top:6px">生成与润色按题材设计焦点、光色和材质。明确的动作、机位与画幅优先；反推保留原图，迭代按反馈修改。</div>
+      </div>
+
+      <div class="card" id="cabinetCard">
+        <div class="cabinet-head"><h3>提示词柜</h3><button class="btn" id="cabinetNew">添加条目</button></div>
+        <div class="cabinet-scroll" role="region" aria-label="提示词条目" tabindex="0">
+          <form id="cabinetEditor" class="hidden">
+            <label for="cabinetName">条目名称</label><input id="cabinetName" maxlength="100" required>
+            <label for="cabinetText">提示词内容</label><textarea id="cabinetText" maxlength="8000" required></textarea>
+            <label for="cabinetMode">用法</label>
+            <select id="cabinetMode"><option value="blend">规则融合 · 画风、光线、材质</option><option value="prefix">原样前置 · 触发词、固定标签</option></select>
+            <div class="row"><button class="btn" type="submit" id="cabinetSave">保存</button><button class="btn" type="button" id="cabinetCancel">取消</button><button class="btn" type="button" id="cabinetDelete">删除</button></div>
+          </form>
+          <div id="cabinetList"></div>
         </div>
+        <div class="hint">模型生成、润色时按勾选顺序应用，可混用前置与融合条目。</div>
+        <div class="hint" role="status" id="cabinetMessage"></div>
+        <button class="chip hidden" id="cabinetReload">重新载入</button>
       </div>
 
       <div class="card">
@@ -208,34 +244,6 @@
         </div>
       </div>
 
-      <div class="card">
-        <h3>画面设计</h3>
-        <label>构图偏好</label>
-        <select id="composition">
-          <option value="auto">自动艺术构图</option>
-          <option value="preserve">保留已有构图</option>
-          <option value="negative_space">偏置与留白</option>
-          <option value="diagonal">对角线与动势</option>
-          <option value="framing">框景与空间层次</option>
-          <option value="geometric">几何秩序与节奏</option>
-        </select>
-        <div class="hint" style="margin-top:6px">生成与润色按题材设计焦点、光色和材质。明确的动作、机位与画幅优先；反推保留原图，迭代按反馈修改。</div>
-      </div>
-
-      <div class="card">
-        <div class="cabinet-head"><h3>提示词柜</h3><button class="btn" id="cabinetNew">添加条目</button></div>
-        <div id="cabinetList"></div>
-        <div class="hint">模型生成、润色时按勾选顺序应用，可混用前置与融合条目。</div>
-        <form id="cabinetEditor" class="hidden">
-          <label for="cabinetName">条目名称</label><input id="cabinetName" maxlength="100" required>
-          <label for="cabinetText">提示词内容</label><textarea id="cabinetText" maxlength="8000" required></textarea>
-          <label for="cabinetMode">用法</label>
-          <select id="cabinetMode"><option value="blend">规则融合 · 画风、光线、材质</option><option value="prefix">原样前置 · 触发词、固定标签</option></select>
-          <div class="row"><button class="btn" type="submit" id="cabinetSave">保存</button><button class="btn" type="button" id="cabinetCancel">取消</button><button class="btn" type="button" id="cabinetDelete">删除</button></div>
-        </form>
-        <div class="hint" role="status" id="cabinetMessage"></div>
-        <button class="chip hidden" id="cabinetReload">重新载入</button>
-      </div>
       <div class="card">
         <h3>高级</h3>
         <label for="model">文本模型</label>
@@ -587,7 +595,7 @@ function renderFams() {
 // ── 页签 ───────────────────────────────────────────────────────────────────
 function setTab(tab) {
   state.tab = tab;
-  $('cabinetList').parentElement.classList.toggle('hidden', !['gen', 'refine'].includes(tab));
+  $('cabinetCard').classList.toggle('hidden', !['gen', 'refine'].includes(tab));
   $('composition').disabled = !['gen', 'refine'].includes(tab);
   document.querySelectorAll('.tab').forEach((t) => {
     t.classList.toggle('on', t.dataset.tab === tab);
@@ -1553,7 +1561,7 @@ async function saveCabinet(action) {
   if (savingCabinet) return;
   savingCabinet = true;
   const editor = $('cabinetEditor');
-  editor.parentElement.inert = true;
+  $('cabinetCard').inert = true;
   try {
     cabinetItems = (await post('/cabinet', {
       action, id: editingEntry?.id, version: editingEntry?.version,
@@ -1568,7 +1576,7 @@ async function saveCabinet(action) {
     $('cabinetReload').classList.remove('hidden');
   } finally {
     savingCabinet = false;
-    editor.parentElement.inert = false;
+    $('cabinetCard').inert = false;
   }
 }
 $('cabinetNew').onclick = () => editCabinet(null);
