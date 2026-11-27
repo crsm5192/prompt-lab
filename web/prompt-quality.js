@@ -44,12 +44,11 @@ export function reviewPrompt(result, family, task = {}) {
   const exceeded = compact && budget !== null && tokens > budget
   const reviewed = () => ({ valid: !issues.length, issues, scope: 'text', approximateTokens: structured ? null : tokens,
     targetMax: budget, budget: budget === null ? null : { maxTokens: budget, exceeded, enforced: mode === 'iterate' } })
-  if (!['tag+NL', 'NL+layout'].includes(kind) && mode !== 'iterate') return reviewed()
-
   // Iteration preserves scene facts while repacking its wording; reverse remains faithful.
   if (exceeded) {
     issues.push(`正文约 ${tokens} token，超过本次${mode === 'iterate' ? '迭代输出上限' : '简洁生成目标'} ${budget}；保留所有指定信息与本轮反馈，重新组织完整正文，合并重复描述并压缩修饰，不截断正文`)
   }
+  if (!['tag+NL', 'NL+layout'].includes(kind) && mode !== 'iterate') return reviewed()
   const sentences = text.split(/(?<=[.!?])\s+/).map((s) => s.trim().toLowerCase()).filter((s) => s.length > 20)
   if (!structured && compact && new Set(sentences).size < sentences.length) issues.push('自然语言出现重复句，合并为一次描述并保留不同的动作和人物信息')
   if (['tag+NL', 'tag'].includes(kind) && compact) {

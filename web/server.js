@@ -145,7 +145,10 @@ function checkLengthAndRepeat(positive, family, notes) {
     return null
   }
   if (!len) return null
-  if (len.over) {
+  if (family.kind === 'Nibbles' && (len.over || len.warn)) {
+    const threshold = len.over ? `，已超过 ${len.hardMax} token 告警线` : ''
+    notes.unshift(`正文约 ${len.value} token${threshold}。Noob2 暂按 Anima 的长度预算，建议控制在 ${len.targetMax} token 以内。`)
+  } else if (len.over) {
     notes.unshift(`⚠ 正文约 ${len.value} token（超限告警阈值 ${len.hardMax}，约 ${Math.round(len.hardMax / 1.45)} 词）。`
       + `实测超过这个量会丢低权重细节、景别漂移，建议精简到 ${len.targetMax} token 以内。`)
   } else if (len.warn) {
@@ -759,7 +762,9 @@ app.post('/api/nibbles/assemble', wrap(async (req, res) => {
   const family = familyOf('nibbles')
   try {
     const result = assembleNibbles(req.body || {})
-    res.json({ ok: true, family: 'nibbles', familyLabel: family.label, ...result })
+    const notes = []
+    const length = checkLengthAndRepeat(result.positive, family, notes)
+    res.json({ ok: true, family: 'nibbles', familyLabel: family.label, ...result, length, notes })
   } catch (error) {
     if (error instanceof RangeError) throw inputError(error.message)
     throw error
@@ -779,7 +784,8 @@ app.post('/api/nibbles/convert', wrap(async (req, res) => {
   }
   const notes = profile === 'sd' ? ['已保留 SD 权重，供解析这种语法的工作流使用。']
     : ['已转换为 Nibbles 标签，可直接复制，或拿去润色为自然语言。', ...nibblesIssues(result.positive)]
-  res.json({ ok: true, family: 'nibbles', familyLabel: family.label, ...result, notes })
+  const length = checkLengthAndRepeat(result.positive, family, notes)
+  res.json({ ok: true, family: 'nibbles', familyLabel: family.label, ...result, length, notes })
 }))
 
 app.post('/api/compose', wrap(async (req, res) => {

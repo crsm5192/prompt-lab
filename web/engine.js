@@ -297,9 +297,14 @@ const LEN_LIMITS = {
   tag: { target: 75, hard: 77 },          // noobai / generic：SDXL 77 token 硬分块
 }
 
+// Noob2 temporarily uses Anima's writing limits while retaining its own output format.
+function lengthKind(family) {
+  return family?.kind === 'Nibbles' ? 'tag+NL' : (asString(family?.kind) || 'tag')
+}
+
 /** Application writing budget; structured Layout data keeps its separate contract. */
 export function promptBudget(family, mode = 'gen', positive = '') {
-  const kind = asString(family?.kind) || 'tag'
+  const kind = lengthKind(family)
   if (mode === 'reverse' || (kind === 'NL+layout' && asString(positive).trim().startsWith('{'))) return null
   if (mode !== 'iterate' && !['tag+NL', 'NL+layout'].includes(kind)) return null
   return kind === 'NL+layout' ? 360 : (LEN_LIMITS[kind]?.target ?? null)
@@ -318,8 +323,8 @@ export function measureLength(text, family, rules) {
   const approxTokens = Math.round(latinWords * 1.45 + cjkChars * 1.0)
 
   // 结构化的 Layout JSON 不做长度/重复判定（它是数据不是散文）
-  const kind = asString(family && family.kind) || 'tag'
-  const lim = kind === 'Nibbles' ? null : (LEN_LIMITS[kind] || LEN_LIMITS['tag+NL'])
+  const kind = lengthKind(family)
+  const lim = LEN_LIMITS[kind] || LEN_LIMITS['tag+NL']
 
   // 只有 moss 的 Layout JSON 才算「结构化数据」跳过判定。
   // 其它族出现 { 开头的文本，几乎都是模型把整个 JSON 信封当成了正文
@@ -629,6 +634,9 @@ export function buildSystem(family, mode, rules, extraNote) {
   }
   lines.push('')
 
+  if (f.kind === 'Nibbles' && (mode === 'gen' || mode === 'refine')) {
+    lines.push(`正向提示词普通场景优先约 180–240 个应用估算 token，复杂场景以 ${promptBudget(f, mode)} 为目标上限。保留指定语言、画师、画内文字与 bbox，优先合并重复描述。`)
+  }
   if (mode === 'refine') {
     lines.push('本次任务【润色改写】：保留用户原意、角色、触发词和明确的视觉要求；修正格式与跨族污染，澄清动作接触关系，并在尚未指定的构图、光色和材质维度提升完成度。')
     lines.push('特别地：若发现不属于该族的词（例如把 NoobAI 的 very awa / worst aesthetic / 下划线写法带进 Anima），必须删改，并在 notes 中说明改了什么。')

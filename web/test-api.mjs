@@ -219,6 +219,12 @@ test('Nibbles prompt workflows', async (t) => {
       assert.match(assembled.body.positive, /@a b 和 @c.*2025.*动漫插画，良好画质，低视觉复杂度/)
       assert.match(assembled.body.positive, /「BLUE_SKY」/)
       assert.equal(assembled.body.params.size, '896x1536')
+      assert.equal(assembled.body.length.targetMax, 300)
+      const longBrief = '白瓷杯'.repeat(140)
+      const longAssembly = await api('assemble', { brief: longBrief })
+      assert.ok(longAssembly.body.positive.includes(longBrief))
+      assert.equal(longAssembly.body.length.over, true)
+      assert.match(longAssembly.body.notes.join(' '), /380 token 告警线/)
       assert.match((await api('assemble', { brief: '窓辺に猫が座っている。', medium: 'photo' })).body.positive, /^写真。/)
       assert.equal((await api('assemble', { ...input, boxes: '[bbox:10,10,1001,500] 人物;' })).status, 400)
       assert.equal((await api('assemble', { ...input, boxes: '[bbox:10,500,60,400] 人物;' })).status, 400)
@@ -258,7 +264,26 @@ test('Nibbles prompt workflows', async (t) => {
         assert.equal(result.body.validation.retried, false)
         assert.equal(result.body.positive, candidate.replace('@ao_ki', '@ao ki'))
         assert.equal(result.body.negative, '@other name, blur')
-        assert.equal(result.body.length.hardMax, null)
+        assert.equal(result.body.length.targetMax, 300)
+        assert.equal(result.body.length.hardMax, data.mode === 'iterate' ? 300 : 380)
+      }
+    })
+    await t.test('Noob2 applies the Anima budget on long drafts without importing its format', async () => {
+      const long = { positive: '白瓷杯'.repeat(130) }
+      const short = { positive: '动漫插画。窗边的白瓷杯，杯身印着「BLUE_SKY」。' }
+      for (const mode of ['gen', 'refine', 'iterate']) {
+        const before = f.state.chatCalls
+        f.state.replies.push(long)
+        if (mode === 'iterate') f.state.replies.push(long)
+        f.state.replies.push(short)
+        const r = await f.api('/api/compose', { mode, family: 'noob2', brief: short.positive, source: long.positive,
+          positive: long.positive, feedback: '保留杯身文字', verifyAnchors: false })
+        assert.equal(r.status, 200)
+        assert.equal(r.body.positive, short.positive)
+        assert.equal(r.body.quality.budget.maxTokens, 300)
+        assert.equal(r.body.quality.budget.enforced, mode === 'iterate')
+        assert.equal(f.state.chatCalls - before, mode === 'iterate' ? 3 : 2)
+        assert.match(f.state.requests[before].messages[0].content, mode === 'iterate' ? /300 个应用估算 token/ : /180–240 个应用估算 token/)
       }
     })
   } finally { await f.close() }
