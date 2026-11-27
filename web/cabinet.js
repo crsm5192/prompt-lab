@@ -37,7 +37,7 @@ export function createCabinet(path) {
     else {
       const name = typeof body.name === 'string' ? body.name.trim() : ''
       const text = typeof body.text === 'string' ? body.text.trim() : ''
-      const mode = body.mode ?? 'blend'
+      const mode = body.mode ?? (action === 'update' ? items[index].mode : 'blend')
       if (!name || !text || name.length > 100 || text.length > 8000) throw inputError('请填写名称（最多 100 字）和内容（最多 8000 字）')
       if (!['blend', 'prefix'].includes(mode)) throw inputError('未知的条目用法')
       const entry = { id: action === 'create' ? randomUUID() : body.id, version: action === 'create' ? 1 : body.version + 1, name, text, mode }
@@ -48,15 +48,24 @@ export function createCabinet(path) {
     return items
   }
 
-  function select(ids, mode) {
-    if (ids === undefined) return []
-    if (!Array.isArray(ids) || ids.some(id => typeof id !== 'string') || new Set(ids).size !== ids.length) throw inputError('无效的提示词柜选项')
-    if (!ids.length) return []
+  function select(selection, mode) {
+    if (selection === undefined) return []
+    if (!Array.isArray(selection)) throw inputError('无效的提示词柜选项')
+    if (!selection.length) return []
     if (!['gen', 'refine'].includes(mode)) throw inputError('提示词柜可用于生成和润色')
     const entries = new Map(list().map(entry => [entry.id, entry]))
-    return ids.map(id => {
-      if (!entries.has(id)) throw inputError('选中的条目已删除，请重新载入提示词柜')
-      return entries.get(id)
+    const seen = new Set()
+    return selection.map(item => {
+      // Older clients send just the ID and use the entry's original mode.
+      const legacy = typeof item === 'string'
+      const id = legacy ? item : item?.id
+      if (typeof id !== 'string' || seen.has(id)) throw inputError('无效的提示词柜选项')
+      seen.add(id)
+      const entry = entries.get(id)
+      if (!entry) throw inputError('选中的条目已删除，请重新载入提示词柜')
+      if (legacy) return entry
+      if (!['blend', 'prefix'].includes(item.mode)) throw inputError('未知的条目用法')
+      return { ...entry, mode: item.mode }
     })
   }
   return { list, change, select }

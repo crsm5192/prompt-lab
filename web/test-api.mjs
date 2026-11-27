@@ -171,6 +171,21 @@ test('cabinet entries persist and ordered prefixes coexist with blended directio
     const layout = JSON.parse(refine.body.positive)
     assert.equal(layout.summary.caption, '(grain:1.2), @tnari_style, A cup.')
     assert.deepEqual(layout.items[0].bbox, [-256, -256, 0, -128])
+    const selection = [{ id: second.id, mode: 'blend' }, { id: ink.id, mode: 'prefix' }]
+    const compose = { family: 'anima', brief: 'A reader', cabinetSelection: selection, verifyAnchors: false }
+    const switched = await f.api('/api/compose', compose)
+    assert.equal(switched.status, 200)
+    assert.ok(switched.body.positive.startsWith(edited.text + ', '))
+    assert.ok(f.state.requests.at(-1).messages.at(-1).content.includes(second.text))
+    const after = (await f.api('/api/cabinet')).body.items
+    assert.deepEqual(after, [edited, first, second])
+    const renamed = await write({ action: 'update', id: second.id, version: second.version, name: 'Grain', text: second.text })
+    assert.equal(renamed.items[2].mode, 'prefix')
+    const calls = f.state.chatCalls
+    for (const invalid of [[...selection, selection[0]], [{ id: first.id, mode: 'invalid' }], [null]]) {
+      assert.equal((await f.api('/api/compose', { ...compose, cabinetSelection: invalid })).status, 400)
+    }
+    assert.equal(f.state.chatCalls, calls)
     assert.equal((await write({ ...edited, action: 'delete' })).items.length, 2)
     const before = f.state.chatCalls
     assert.equal((await f.api('/api/compose', { family: 'anima', brief: 'A reader', cabinetIds })).status, 400)

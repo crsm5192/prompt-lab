@@ -591,7 +591,7 @@ function finishResult(result, family, retried = false, payload = {}, repairAttem
 
 async function doCompose(payload, { signal } = {}) {
   const mode = validateTask(payload)
-  const selected = cabinet.select(payload.cabinetIds, mode)
+  const selected = cabinet.select(payload.cabinetSelection === undefined ? payload.cabinetIds : payload.cabinetSelection, mode)
   const blend = selected.filter(entry => entry.mode === 'blend').map(entry => entry.text)
   const prefixes = selected.filter(entry => entry.mode === 'prefix').map(entry => entry.text)
   const family = familyOf(payload.family)

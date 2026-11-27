@@ -110,6 +110,10 @@
   .cabinet-item { padding: 6px 0; border-bottom: 1px solid var(--border); }
   .cabinet-item label { flex: 1; min-width: 0; color: var(--text); overflow-wrap: anywhere; cursor: pointer; }
   .cabinet-item input { width: auto; margin-right: 6px; }
+  .cabinet-mode { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; flex-shrink: 0; }
+  .cabinet-mode button { font: inherit; font-size: 12px; padding: 4px 9px; border: 0; color: var(--dim); background: var(--bg); cursor: pointer; }
+  .cabinet-mode button[aria-pressed="true"] { background: var(--accent); color: var(--bg); font-weight: 600; }
+  .cabinet-mode button:focus-visible { outline: 2px solid currentColor; outline-offset: -3px; }
   #cabinetCard { display: flex; flex-direction: column; gap: 6px; max-height: min(20rem, 70vh); }
   .cabinet-scroll {
     min-height: 0; overflow-y: auto; scrollbar-gutter: stable;
@@ -195,13 +199,11 @@
           <form id="cabinetEditor" class="hidden">
             <label for="cabinetName">条目名称</label><input id="cabinetName" maxlength="100" required>
             <label for="cabinetText">提示词内容</label><textarea id="cabinetText" maxlength="8000" required></textarea>
-            <label for="cabinetMode">用法</label>
-            <select id="cabinetMode"><option value="blend">规则融合 · 画风、光线、材质</option><option value="prefix">原样前置 · 触发词、固定标签</option></select>
             <div class="row"><button class="btn" type="submit" id="cabinetSave">保存</button><button class="btn" type="button" id="cabinetCancel">取消</button><button class="btn" type="button" id="cabinetDelete">删除</button></div>
           </form>
           <div id="cabinetList"></div>
         </div>
-        <div class="hint">模型生成、润色时按勾选顺序应用，可混用前置与融合条目。</div>
+        <div class="hint">勾选条目后可逐条切换用法。融合会交给模型改写，前置会按勾选顺序原样插入开头。</div>
         <div class="hint" role="status" id="cabinetMessage"></div>
         <button class="chip hidden" id="cabinetReload">重新载入</button>
       </div>
@@ -465,6 +467,7 @@ const state = {
   imageName: '',
   result: null,
   cabinetIds: [],
+  cabinetModes: new Map(),
 };
 
 
@@ -869,14 +872,14 @@ async function run(kind) {
         mode: 'gen', family: state.family,
         brief: $('brief').value, base: $('base').value,
         composition: $('composition').value,
-        ...modelOptions, hardNote, cabinetIds: state.cabinetIds,
+        ...modelOptions, hardNote, cabinetSelection: cabinetSelection(),
       });
     } else if (kind === 'refine') {
       r = await post('/compose', {
         mode: 'refine', family: state.family,
         source: $('source').value, base: $('refBase').value,
         composition: $('composition').value,
-        ...modelOptions, hardNote, cabinetIds: state.cabinetIds,
+        ...modelOptions, hardNote, cabinetSelection: cabinetSelection(),
       });
     } else if (kind === 'iterate') {
       r = await post('/compose', {
@@ -1466,10 +1469,15 @@ let cabinetItems = [];
 let editingEntry = null;
 let savingCabinet = false;
 
+function cabinetSelection() {
+  return state.cabinetIds.map(id => ({ id, mode: state.cabinetModes.get(id) }));
+}
+
 function renderCabinet() {
   const list = $('cabinetList');
   list.replaceChildren();
   state.cabinetIds = state.cabinetIds.filter(id => cabinetItems.some(entry => entry.id === id));
+  state.cabinetModes = new Map(cabinetItems.map(entry => [entry.id, state.cabinetModes.get(entry.id) ?? entry.mode]));
   for (const entry of cabinetItems) {
     const row = document.createElement('div');
     row.className = 'cabinet-item';
@@ -1486,9 +1494,21 @@ function renderCabinet() {
     };
     const order = state.cabinetIds.indexOf(entry.id);
     label.append(check, (order < 0 ? '' : (order + 1) + '. ') + entry.name);
-    const mode = document.createElement('span');
-    mode.className = 'hint';
-    mode.textContent = entry.mode === 'prefix' ? '前置' : '融合';
+    const mode = document.createElement('div');
+    mode.className = 'cabinet-mode';
+    mode.setAttribute('role', 'group');
+    mode.setAttribute('aria-label', entry.name + '的用法');
+    for (const [value, caption] of [['blend', '融合'], ['prefix', '前置']]) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = caption;
+      button.setAttribute('aria-pressed', String(state.cabinetModes.get(entry.id) === value));
+      button.onclick = () => {
+        state.cabinetModes.set(entry.id, value);
+        for (const option of mode.children) option.setAttribute('aria-pressed', String(option === button));
+      };
+      mode.append(button);
+    }
     const edit = document.createElement('button');
     edit.className = 'chip';
     edit.textContent = '编辑';
@@ -1503,7 +1523,6 @@ function editCabinet(entry) {
   editingEntry = entry;
   $('cabinetName').value = entry?.name || '';
   $('cabinetText').value = entry?.text || '';
-  $('cabinetMode').value = entry?.mode || 'blend';
   $('cabinetDelete').classList.toggle('hidden', !entry);
   $('cabinetEditor').classList.remove('hidden');
   $('cabinetName').focus();
@@ -1528,7 +1547,7 @@ async function saveCabinet(action) {
   try {
     cabinetItems = (await post('/cabinet', {
       action, id: editingEntry?.id, version: editingEntry?.version,
-      name: $('cabinetName').value, text: $('cabinetText').value, mode: $('cabinetMode').value,
+      name: $('cabinetName').value, text: $('cabinetText').value,
     })).items;
     renderCabinet();
     editor.classList.add('hidden');

@@ -31,16 +31,24 @@ test('composition selection is submitted for generation and refinement', async (
   document.querySelector('#composition option[value="diagonal"]').selected = true
   document.querySelector('#reasoningEffort option[value="high"]').selected = true
   const requests = []
-  const context = { document, $: (id) => document.getElementById(id), state: { family: 'anima', cabinetIds: ['second', 'first'] }, busy() {}, renderResult() {}, setStatus() {},
+  const state = { family: 'anima', cabinetIds: ['second', 'first'], cabinetModes: new Map() }
+  const cabinetItems = [{ id: 'first', name: 'Ink', text: 'ink', mode: 'prefix' }, { id: 'second', name: 'Grain', text: 'grain', mode: 'blend' }]
+  const context = { document, $: (id) => document.getElementById(id), state, cabinetItems, busy() {}, renderResult() {}, setStatus() {},
     post: async (path, payload) => { requests.push({ path, payload }); return { positive: 'test', notes: [] } } }
-  const code = segment('async function run(', "$('runGen').onclick")
+  const code = segment('function cabinetSelection(', 'function editCabinet(') + segment('async function run(', "$('runGen').onclick")
+  vm.runInNewContext(code + '\nrenderCabinet();', context)
+  const buttons = document.querySelectorAll('.cabinet-mode button')
+  assert.equal(buttons[1].getAttribute('aria-pressed'), 'true')
+  buttons[0].click()
+  buttons[3].click()
   await vm.runInNewContext(code + '\nrun("gen");', context)
   await vm.runInNewContext(code + '\nrun("refine");', context)
   assert.equal(requests.length, 2)
   assert.equal(requests[0].payload.composition, 'diagonal')
   assert.equal(requests[1].payload.composition, 'diagonal')
   assert.ok(requests.every(r => r.payload.reasoningEffort === 'high'))
-  assert.ok(requests.every(r => r.payload.cabinetIds.join() === 'second,first'))
+  assert.ok(requests.every(r => JSON.stringify(r.payload.cabinetSelection) === JSON.stringify([{ id: 'second', mode: 'prefix' }, { id: 'first', mode: 'blend' }])))
+  assert.equal(requests.every(r => r.path === '/compose'), true)
 })
 
 test('generation displays a pending indicator and restores the button on success and failure', async () => {
@@ -50,7 +58,7 @@ test('generation displays a pending indicator and restores the button on success
   let resolve, reject, tick, elapsed = 0
   const context = vm.createContext({ $, document, state, performance: { now: () => elapsed },
     setInterval(fn) { tick = fn; return 1 }, clearInterval() { tick = null }, renderResult() {},
-    escapeHtml: s => s, post: () => new Promise((yes, no) => { resolve = yes; reject = no }) })
+    cabinetSelection: () => [], escapeHtml: s => s, post: () => new Promise((yes, no) => { resolve = yes; reject = no }) })
   vm.runInContext(segment('function setStatus(', 'function copy(') + segment('async function run(', "$('runGen').onclick"), context)
   for (const fails of [false, true]) {
     const pending = vm.runInContext('run("gen")', context)
